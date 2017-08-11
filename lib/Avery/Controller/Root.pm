@@ -26,6 +26,7 @@ sub read {
 
   unless ($val) {
     $self->render( json => {}, status => 404 );
+    return;
   }
 
   $self->render( data => $val );

@@ -6,6 +6,7 @@ use v5.10;
 use utf8;
 
 use Cpanel::JSON::XS;
+use Data::Dumper;
 use RedisDB;
 
 my $JSON = Cpanel::JSON::XS->new->utf8;
@@ -16,15 +17,14 @@ my %VALIDATION = (
   email      => { len => 100 },
   first_name => { len => 50 },
   last_name  => { len => 50 },
-  gender => { in => { m => 1, f => 1 } },
-  birth_date => { min => -1262304000, max => 915235199 },
-  country    => { len => 50 },
-  city       => { len => 50 },
-  id         => { min => 0,           max => 2147483647 },
-  location   => { min => 0,           max => 2147483647 },
-  user       => { min => 0,           max => 2147483647 },
-  visited_at => { min => 946684800,   max => 1420156799 },
-  mark       => { min => 0,           max => 5 },
+  gender  => { in  => { m => 1, f => 1 } },
+  country => { len => 50 },
+  city    => { len => 50 },
+  id         => { min => 0,         max => 2147483647 },
+  location   => { min => 0,         max => 2147483647 },
+  user       => { min => 0,         max => 2147483647 },
+  visited_at => { min => 946684800, max => 1420156799 },
+  mark       => { min => 0,         max => 5 },
 );
 
 sub new {
@@ -36,7 +36,7 @@ sub new {
 sub load {
   my $self = shift;
 
-  my @files = glob '/tmp/data/*.json';
+  my @files = glob '/tmp/unzip/*.json';
 
   foreach my $file (@files) {
     say $file;
@@ -51,7 +51,7 @@ sub load {
     say $entity;
 
     foreach my $val ( @{ $decoded->{$entity} } ) {
-      $self->create( $entity, $val );
+      my $status = $self->create( $entity, $val );
     }
   }
 
@@ -66,18 +66,7 @@ sub create {
 
   foreach my $key ( keys %$val ) {
     next unless $VALIDATION{$key};
-
-    if ( $VALIDATION{$key}->{len} ) {
-      return -2 if length( $val->{$key} ) > $VALIDATION{$key}->{len};
-    }
-    elsif ( $VALIDATION{$key}->{in} ) {
-      return -2 unless $VALIDATION{$key}->{in}->{ $val->{$key} };
-    }
-    elsif ( $VALIDATION{$key}->{max} ) {
-      return -2 if $val->{$key} !~ m/^\d+$/;
-      return -2 if $val->{$key} < $VALIDATION{$key}->{min};
-      return -2 if $val->{$key} > $VALIDATION{$key}->{max};
-    }
+    return -1 if _validate( 'create', $key, $val->{$key} ) == -2;
   }
 
   my $encoded = $JSON->encode($val);
@@ -105,17 +94,7 @@ sub update {
   my $decoded = $JSON->decode($curr);
   foreach my $key ( keys %$val ) {
     if ( $VALIDATION{$key} ) {
-      if ( $VALIDATION{$key}->{len} ) {
-        return -2 if length( $val->{$key} ) > $VALIDATION{$key}->{len};
-      }
-      elsif ( $VALIDATION{$key}->{in} ) {
-        return -2 unless $VALIDATION{$key}->{in}->{ $val->{$key} };
-      }
-      elsif ( $VALIDATION{$key}->{max} ) {
-        return -2 if $val->{$key} !~ m/^\d+$/;
-        return -2 if $val->{$key} < $VALIDATION{$key}->{min};
-        return -2 if $val->{$key} > $VALIDATION{$key}->{max};
-      }
+      return -1 if _validate( 'update', $key, $val->{$key} ) == -2;
     }
 
     $decoded->{$key} = $val->{$key};
@@ -123,6 +102,37 @@ sub update {
 
   my $encoded = $JSON->encode($decoded);
   $REDIS->set( 'val_' . $entity . '_' . $id, $encoded );
+
+  return 1;
+}
+
+sub _validate {
+  my ( $action, $key, $val ) = @_;
+
+  if ( $VALIDATION{$key}->{len} ) {
+    if ( defined($val)
+      && length($val) > $VALIDATION{$key}->{len} )
+    {
+      say "fail $action key:$key";
+      return -2;
+    }
+  }
+  elsif ( $VALIDATION{$key}->{in} ) {
+    if ( defined($val) && $VALIDATION{$key}->{in}->{$val} ) {
+      say "fail $action key:$key";
+      return -2;
+    }
+  }
+  elsif ( $VALIDATION{$key}->{max} ) {
+    if ( !defined($val)
+      || $val !~ m/^\-{0,1}\d+$/
+      || $val < $VALIDATION{$key}->{min}
+      || $val > $VALIDATION{$key}->{max} )
+    {
+      say "fail $action key:$key";
+      return -2;
+    }
+  }
 
   return 1;
 }

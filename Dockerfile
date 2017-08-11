@@ -12,14 +12,17 @@ RUN \
     unzip \
 
   && cpanm \
+    Cpanel::JSON::XS \
     Mojolicious \
     RedisDB \
-    Cpanel::JSON::XS \
 
   && mkdir -p /var/run/redis
 
 EXPOSE 80
 
 COPY redis.conf /etc/redis/redis.conf
+COPY start.sh /usr/local/bin/start.sh
+COPY bin/avery.pl /usr/local/bin/avery.pl
+COPY lib /usr/share/perl5
 
 CMD ["/usr/local/bin/start.sh"]
