@@ -13,6 +13,8 @@ sub routes {
   $route->get('/:entity/:id')->to('Root#read');
   $route->post('/:entity/new')->to('Root#create');
   $route->post('/:entity/:id')->to('Root#update');
+  $route->get('/users/:id/visits')->to('Root#visits');
+  $route->get('/locations/:id/avg')->to('Root#avg');
 
   return;
 }
@@ -61,6 +63,22 @@ sub create {
   elsif ( $status == -2 ) {
     $self->render( json => {}, status => 400 );
   }
+
+  return;
+}
+
+sub visits {
+  my $self = shift;
+
+  $self->render( json => { visits => [] } );
+
+  return;
+}
+
+sub avg {
+  my $self = shift;
+
+  $self->render( json => { avg => 1 } );
 
   return;
 }
