@@ -5,6 +5,7 @@ use warnings;
 use v5.10;
 use utf8;
 
+use Time::HiRes;
 use Clone qw(clone);
 use Cpanel::JSON::XS;
 use Data::Dumper;
@@ -51,12 +52,10 @@ sub load {
   push @files, glob '/tmp/unzip/locations*.json';
   push @files, glob '/tmp/unzip/visits*.json';
 
-  use Time::HiRes;
+  my $start = Time::HiRes::time;
+  say "Start $start";
 
   foreach my $file (@files) {
-    say $file . ' size: ' . -s ($file);
-    say Time::HiRes::time;
-
     open my $fl, "$file";
     my $st = <$fl>;
     close $fl;
@@ -64,12 +63,10 @@ sub load {
     my $decoded = $JSON->decode($st);
 
     my $entity = ( keys %$decoded )[0];
-    say $entity;
 
     foreach my $val ( @{ $decoded->{$entity} } ) {
-      my $status = $self->create( $entity, $val );
+      my $status = $self->create( $entity, $val, without_validation => 1 );
     }
-    say Time::HiRes::time;
   }
 
   $REDIS->mainloop;
@@ -77,19 +74,22 @@ sub load {
   undef %LOCATIONS;
   undef %USERS;
 
-  say 'Loaded';
-  say Time::HiRes::time;
+  my $end = Time::HiRes::time;
+  say "Loaded $end, diff " . ( $end - $start );
 
   return;
 }
 
 sub create {
   my $self = shift;
-  my ( $entity, $val ) = @_;
+  my ( $entity, $val ) = ( shift, shift );
+  my %params = @_;
 
-  foreach my $key ( keys %$val ) {
-    next unless $VALIDATION{$key};
-    return -2 if _validate( 'create', $key, $val->{$key} ) == -2;
+  if ( !$params{without_validation} ) {
+    foreach my $key ( keys %$val ) {
+      next unless $VALIDATION{$key};
+      return -2 if _validate( 'create', $key, $val->{$key} ) == -2;
+    }
   }
 
   my $encoded = $JSON->encode($val);
@@ -264,6 +264,8 @@ sub users_visits {
     return -2 if _validate( 'users_visits', $key, $params{$key} ) == -2;
   }
 
+  return -1 unless $REDIS->exists( 'val_users_' . $id );
+
   my $from = $params{fromDate} // 0;
   my $to   = $params{toDate}   // 2147483647;
 
@@ -331,6 +333,8 @@ sub avg {
     next unless $VALIDATION{$key};
     return -2 if _validate( 'avg', $key, $params{$key} ) == -2;
   }
+
+  return -1 unless $REDIS->exists( 'val_locations_' . $id );
 
   my $from = $params{fromDate} // 0;
   my $to   = $params{toDate}   // 2147483647;
