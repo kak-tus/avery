@@ -7,13 +7,14 @@ RUN \
     build-essential \
     ca-certificates \
     cpanminus \
+    libclone-perl \
+    libcpanel-json-xs-perl \
+    libdatetime-perl \
     libmodule-install-perl \
     redis-server \
     unzip \
 
   && cpanm \
-    Clone \
-    Cpanel::JSON::XS \
     Mojolicious \
     RedisDB \
 

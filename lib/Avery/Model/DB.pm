@@ -5,13 +5,14 @@ use warnings;
 use v5.10;
 use utf8;
 
-use Time::HiRes;
 use Clone qw(clone);
 use Cpanel::JSON::XS;
 use Data::Dumper;
+use DateTime;
 use Encode qw(encode_utf8);
 use List::Util qw(any);
 use RedisDB;
+use Time::HiRes;
 
 my $JSON      = Cpanel::JSON::XS->new->utf8;
 my $JSON_SORT = Cpanel::JSON::XS->new->utf8->canonical(1);
@@ -26,17 +27,19 @@ my %VALIDATION = (
   last_name  => { len => 50 },
   gender  => { in  => { m => 1, f => 1 } },
   country => { len => 50 },
-  city    => { len => 50 },
-  id         => { min => 0,         max => 2147483647 },
-  location   => { min => 0,         max => 2147483647 },
-  user       => { min => 0,         max => 2147483647 },
-  visited_at => { min => 946684800, max => 1420156799 },
-  mark       => { min => 0,         max => 5 },
-  fromDate   => { min => 0,         max => 2147483647, optional => 1 },
-  toDate     => { min => 0,         max => 2147483647, optional => 1 },
-  toDistance => { min => 0,         max => 2147483647, optional => 1 },
-  fromAge    => { min => 0,         max => 2147483647, optional => 1 },
-  toAge      => { min => 0,         max => 2147483647, optional => 1 },
+  birth_date => { min => -1262304000, max => 915148800 },
+  city       => { len => 50 },
+  id         => { min => 0,           max => 2147483647 },
+  location   => { min => 0,           max => 2147483647 },
+  user       => { min => 0,           max => 2147483647 },
+  distance   => { min => 0,           max => 2147483647 },
+  visited_at => { min => 946684800,   max => 1420070400 },
+  mark       => { min => 0,           max => 5 },
+  fromDate   => { min => 0, max => 2147483647, optional => 1 },
+  toDate     => { min => 0, max => 2147483647, optional => 1 },
+  toDistance => { min => 0, max => 2147483647, optional => 1 },
+  fromAge    => { min => 0, max => 2147483647, optional => 1 },
+  toAge      => { min => 0, max => 2147483647, optional => 1 },
 );
 
 sub new {
@@ -323,8 +326,11 @@ sub avg {
     next if $params{gender} && $decoded->{user}{gender} ne $params{gender};
 
     if ( $params{fromAge} || $params{toAge} ) {
-      my $age = int(
-        ( time - $decoded->{user}{birth_date} ) / ( 60 * 60 * 24 * 365 ) );
+      my $dt1 = DateTime->from_epoch( epoch => $decoded->{user}{birth_date} );
+      my $dt2 = DateTime->today( time_zone => 'UTC' );
+      my $dur = $dt2->subtract_datetime($dt1);
+
+      my $age = $dur->years;
 
       next if $params{fromAge} && $age <= $params{fromAge};
       next if $params{toAge}   && $age >= $params{toAge};
