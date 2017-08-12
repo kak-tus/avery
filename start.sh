@@ -3,7 +3,7 @@
 mkdir /tmp/unzip
 cp /tmp/data/data.zip /tmp/unzip
 cd /tmp/unzip
-unzip data.zip
+unzip data.zip > /dev/null
 cd /
 
 redis-server /etc/redis/redis.conf

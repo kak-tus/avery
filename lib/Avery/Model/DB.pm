@@ -14,6 +14,7 @@ use RedisDB;
 my $JSON = Cpanel::JSON::XS->new->utf8;
 my $REDIS;
 my %LOCATIONS;
+my %USERS;
 
 my %VALIDATION = (
   id         => { min => 1, max => 2147483647 },
@@ -49,7 +50,7 @@ sub load {
   use Time::HiRes;
 
   foreach my $file (@files) {
-    say $file;
+    say $file . ' size: ' . -s ($file);
     say Time::HiRes::time;
 
     open my $fl, "$file";
@@ -68,6 +69,9 @@ sub load {
   }
 
   $REDIS->mainloop;
+
+  undef %LOCATIONS;
+  undef %USERS;
 
   say 'Loaded';
   say Time::HiRes::time;
@@ -88,23 +92,49 @@ sub create {
   $REDIS->set( 'val_' . $entity . '_' . $val->{id}, $encoded, sub { } );
 
   if ( $entity eq 'locations' ) {
-    $LOCATIONS{ $val->{id} } = $val;
+    $LOCATIONS{ $val->{id} } = { hash => $val, encoded => $encoded };
+  }
+  elsif ( $entity eq 'users' ) {
+    $USERS{ $val->{id} } = { hash => $val, encoded => $encoded };
   }
 
   if ( $entity eq 'visits' ) {
-    my $location = $LOCATIONS{ $val->{location} };
+    my $location     = $LOCATIONS{ $val->{location} }->{hash};
+    my $location_enc = $LOCATIONS{ $val->{location} }->{encoded};
+    my $user         = $USERS{ $val->{user} };
+
+    unless ($location) {
+      $location_enc = $REDIS->get( 'val_locations_' . $val->{location} );
+      $location     = $JSON->decode($location_enc);
+    }
+
+    unless ($user) {
+      my $user_enc = $REDIS->get( 'val_users_' . $val->{user} );
+      $user = { hash => $JSON->decode($user_enc), encoded => $user_enc };
+    }
 
     $REDIS->zadd( 'val_users_visits_' . $val->{user},
       $val->{visited_at}, $encoded, sub { } );
 
     $REDIS->sadd(
       'val_countries_locations_' . encode_utf8( $location->{country} ),
-      $encoded, sub { } );
+      $location_enc, sub { } );
 
     $REDIS->zadd( 'val_users_distances_locations_' . $val->{user},
-      $location->{distance}, $encoded, sub { } );
+      $location->{distance}, $location_enc, sub { } );
 
-    $REDIS->sadd( 'val_users_locations_' . $val->{user}, $encoded, sub { } );
+    $REDIS->sadd( 'val_users_locations_' . $val->{user},
+      $location_enc, sub { } );
+
+    ## $REDIS->incrby( 'val_locations_marks_sum_' . $val->{location},
+    ##   $val->{mark}, sub { } );
+    ## $REDIS->incr( 'val_locations_marks_count_' . $val->{location}, sub { } );
+
+    my %user_visit = ( user => $user->{hash}, visit => $val );
+    my $user_visit_encoded = $JSON->encode( \%user_visit );
+
+    $REDIS->zadd( 'val_locations_users_visits_' . $val->{location},
+      $val->{visited_at}, $user_visit_encoded, sub { } );
   }
 
   return 1;
@@ -207,13 +237,12 @@ sub users_visits {
     $dist_locations = [ map { $JSON->decode($_) } @$dist_locations_enc ];
   }
 
-  my $list = $locations || $dist_locations;
-  unless ($list) {
-    my $list_enc = $REDIS->smembers( 'val_users_locations_' . $id );
-    $list = [ map { $JSON->decode($_) } @$list_enc ];
+  my $items = $locations || $dist_locations;
+  unless ($items) {
+    my $items_enc = $REDIS->smembers( 'val_users_locations_' . $id );
+    $items = [ map { $JSON->decode($_) } @$items_enc ];
   }
-
-  my %locations_list = map { ( $_->{id} => $_ ) } @$list;
+  my %all_locations = map { ( $_->{id} => $_ ) } @$items;
 
   foreach my $val (@$vals) {
     my $decoded = $JSON->decode($val);
@@ -234,12 +263,46 @@ sub users_visits {
     my %visit = (
       mark       => $decoded->{mark},
       visited_at => $decoded->{visited_at},
-      place      => $locations_list{ $decoded->{location} }->{place},
+      place      => $all_locations{ $decoded->{location} }->{place},
     );
     push @res, \%visit;
   }
 
   return \@res;
+}
+
+sub avg {
+  my $self   = shift;
+  my $id     = shift;
+  my %params = @_;
+
+  foreach my $key ( keys %params ) {
+    next unless $VALIDATION{$key};
+    return -2 if _validate( 'avg', $key, $params{$key} ) == -2;
+  }
+
+  my $from = $params{fromDate} // 0;
+  my $to   = $params{toDate}   // 2147483647;
+
+  my $vals = $REDIS->zrangebyscore( 'val_locations_users_visits_' . $id,
+    "($from", "($to" );
+  return -1 unless $vals;
+
+  my ( $sum, $cnt ) = ( 0, 0 );
+
+  foreach my $val (@$vals) {
+    my $decoded = $JSON->decode($val);
+
+    next if $params{gender} && $decoded->{user}{gender} ne $params{gender};
+
+    $cnt++;
+    $sum += $decoded->{visit}{mark};
+  }
+
+  return -1 unless $cnt;
+
+  my $avg = sprintf '%.5f', ( $sum / $cnt );
+  return $avg;
 }
 
 1;

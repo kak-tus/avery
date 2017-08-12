@@ -96,7 +96,25 @@ sub users_visits {
 sub avg {
   my $self = shift;
 
-  $self->render( json => { avg => 1 } );
+  my %args = (
+    fromDate => $self->param('fromDate'),
+    toDate   => $self->param('toDate'),
+    fromAge  => $self->param('fromAge'),
+    toAge    => $self->param('toAge'),
+    gender   => $self->param('gender'),
+  );
+
+  my $avg = $self->db->avg( $self->stash('id'), %args );
+
+  if ( $avg == -1 ) {
+    $self->render( json => {}, status => 404 );
+  }
+  elsif ( $avg == -2 ) {
+    $self->render( json => {}, status => 400 );
+  }
+  else {
+    $self->render( json => { avg => $avg } );
+  }
 
   return;
 }
