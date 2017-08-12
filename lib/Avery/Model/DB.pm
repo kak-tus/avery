@@ -117,18 +117,12 @@ sub create {
       $user = { hash => $JSON->decode($user_enc), encoded => $user_enc };
     }
 
-    $REDIS->zadd( 'val_users_visits_' . $val->{user},
-      $val->{visited_at}, $encoded, sub { } );
+    my %user_visits_locations = ( visit => $val, location => $location );
+    my $user_visits_locations_enc
+        = $JSON_SORT->encode( \%user_visits_locations );
 
-    $REDIS->sadd(
-      'val_countries_locations_' . encode_utf8( $location->{country} ),
-      $location_enc, sub { } );
-
-    $REDIS->zadd( 'val_users_distances_locations_' . $val->{user},
-      $location->{distance}, $location_enc, sub { } );
-
-    $REDIS->sadd( 'val_users_locations_' . $val->{user},
-      $location_enc, sub { } );
+    $REDIS->zadd( 'val_users_visits_locations_' . $val->{user},
+      $val->{visited_at}, $user_visits_locations_enc, sub { } );
 
     my %user_visit = ( user => $user->{hash}, visit => $val );
     my $user_visit_encoded = $JSON_SORT->encode( \%user_visit );
@@ -171,52 +165,58 @@ sub update {
   $REDIS->set( 'val_' . $entity . '_' . $id, $encoded );
 
   if ( $entity eq 'visits' ) {
-    $REDIS->zrem( 'val_users_visits_' . $decoded_orig->{user},
-      $curr, sub { } );
-    $REDIS->zadd(
-      'val_users_visits_' . $decoded->{user},
-      $decoded->{visited_at},
-      $encoded, sub { }
-    );
+    my $user_orig_enc = $REDIS->get( 'val_users_' . $decoded_orig->{user} );
+    my $user_orig     = {
+      hash    => $JSON->decode($user_orig_enc),
+      encoded => $user_orig_enc,
+    };
 
-    my $user_enc = $REDIS->get( 'val_users_' . $decoded_orig->{user} );
+    my $user_enc = $REDIS->get( 'val_users_' . $decoded->{user} );
     my $user = { hash => $JSON->decode($user_enc), encoded => $user_enc };
 
-    my %user_visit = ( user => $user->{hash}, visit => $decoded_orig );
-    my $user_visit_encoded = $JSON_SORT->encode( \%user_visit );
+    my $location_orig_enc
+        = $REDIS->get( 'val_locations_' . $decoded_orig->{location} );
+    my $location_orig = $JSON->decode($location_orig_enc);
+
+    my $location_enc = $REDIS->get( 'val_locations_' . $decoded->{location} );
+    my $location     = $JSON->decode($location_enc);
+
+    my %user_visits_locations_orig
+        = ( visit => $decoded_orig, location => $location_orig );
+    my $user_visits_locations_orig_enc
+        = $JSON_SORT->encode( \%user_visits_locations_orig );
+
+    $REDIS->zrem(
+      'val_users_visits_locations_' . $decoded_orig->{user},
+      $user_visits_locations_orig_enc,
+      sub { }
+    );
+
+    my %user_visits_locations = ( visit => $decoded, location => $location );
+    my $user_visits_locations_enc
+        = $JSON_SORT->encode( \%user_visits_locations );
+
+    $REDIS->zadd(
+      'val_users_visits_locations_' . $decoded->{user},
+      $decoded->{visited_at},
+      $user_visits_locations_enc, sub { }
+    );
+
+    my %user_visit_orig
+        = ( user => $user_orig->{hash}, visit => $decoded_orig );
+    my $user_visit_orig_enc = $JSON_SORT->encode( \%user_visit_orig );
 
     $REDIS->zrem( 'val_locations_users_visits_' . $decoded_orig->{location},
-      $user_visit_encoded, sub { } );
+      $user_visit_orig_enc, sub { } );
 
-    $user_enc = $REDIS->get( 'val_users_' . $decoded->{user} );
-    $user = { hash => $JSON->decode($user_enc), encoded => $user_enc };
-
-    %user_visit = ( user => $user->{hash}, visit => $decoded );
-    $user_visit_encoded = $JSON_SORT->encode( \%user_visit );
+    my %user_visit = ( user => $user->{hash}, visit => $decoded );
+    my $user_visit_enc = $JSON_SORT->encode( \%user_visit );
 
     $REDIS->zadd(
       'val_locations_users_visits_' . $decoded->{location},
       $decoded->{visited_at},
-      $user_visit_encoded, sub { }
+      $user_visit_enc, sub { }
     );
-  }
-  elsif ( $entity eq 'locations' ) {
-    $REDIS->srem(
-      'val_countries_locations_' . encode_utf8( $decoded_orig->{country} ),
-      $curr, sub { } );
-    $REDIS->sadd(
-      'val_countries_locations_' . encode_utf8( $decoded->{country} ),
-      $encoded, sub { } );
-
-    # $REDIS->zrem( 'val_users_distances_locations_' . $val->{user},
-    #   $location->{distance}, $location_enc, sub { } );
-    # $REDIS->zadd( 'val_users_distances_locations_' . $val->{user},
-    #   $location->{distance}, $location_enc, sub { } );
-
-    # $REDIS->sadd( 'val_users_locations_' . $val->{user},
-    #   $location_enc, sub { } );
-    # $REDIS->sadd( 'val_users_locations_' . $val->{user},
-    #   $location_enc, sub { } );
   }
 
   return 1;
@@ -269,54 +269,26 @@ sub users_visits {
   my $from = $params{fromDate} // 0;
   my $to   = $params{toDate}   // 2147483647;
 
-  my $vals
-      = $REDIS->zrangebyscore( 'val_users_visits_' . $id, "($from", "($to" );
+  my $vals = $REDIS->zrangebyscore( 'val_users_visits_locations_' . $id,
+    "($from", "($to" );
   return -1 unless $vals;
 
   my @res;
 
-  my $locations;
-  if ( defined $params{country} ) {
-    my $locations_enc = $REDIS->smembers(
-      'val_countries_locations_' . encode_utf8( $params{country} ) );
-    $locations = [ map { $JSON->decode($_) } @$locations_enc ];
-  }
-
-  my $dist_locations;
-  if ( defined $params{toDistance} ) {
-    my $dist_locations_enc
-        = $REDIS->zrangebyscore( 'val_users_distances_locations_' . $id,
-      0, '(' . $params{toDistance} );
-    $dist_locations = [ map { $JSON->decode($_) } @$dist_locations_enc ];
-  }
-
-  my $items = $locations || $dist_locations;
-  unless ($items) {
-    my $items_enc = $REDIS->smembers( 'val_users_locations_' . $id );
-    $items = [ map { $JSON->decode($_) } @$items_enc ];
-  }
-  my %all_locations = map { ( $_->{id} => $_ ) } @$items;
-
   foreach my $val (@$vals) {
     my $decoded = $JSON->decode($val);
 
-    if ( defined $params{country} ) {
-      next
-          unless ( any { $decoded->{location} == $_->{id} } @$locations );
-    }
-
-    if ( defined $params{toDistance} ) {
-      next
-          unless (
-        any { $decoded->{location} == $_->{id} }
-        @$dist_locations
-          );
-    }
+    next
+        if defined $params{country}
+        && $decoded->{location}{country} ne $params{country};
+    next
+        if defined $params{toDistance}
+        && $decoded->{location}{distance} >= $params{toDistance};
 
     my %visit = (
-      mark       => $decoded->{mark},
-      visited_at => $decoded->{visited_at},
-      place      => $all_locations{ $decoded->{location} }->{place},
+      mark       => $decoded->{visit}{mark},
+      visited_at => $decoded->{visit}{visited_at},
+      place      => $decoded->{location}->{place},
     );
     push @res, \%visit;
   }
