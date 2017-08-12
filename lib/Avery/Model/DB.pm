@@ -13,6 +13,7 @@ use RedisDB;
 
 my $JSON = Cpanel::JSON::XS->new->utf8;
 my $REDIS;
+my %LOCATIONS;
 
 my %VALIDATION = (
   id         => { min => 1, max => 2147483647 },
@@ -29,6 +30,7 @@ my %VALIDATION = (
   mark       => { min => 0,         max => 5 },
   fromDate   => { min => 0,         max => 2147483647, optional => 1 },
   toDate     => { min => 0,         max => 2147483647, optional => 1 },
+  toDistance => { min => 0,         max => 2147483647, optional => 1 },
 );
 
 sub new {
@@ -44,8 +46,11 @@ sub load {
   push @files, glob '/tmp/unzip/locations*.json';
   push @files, glob '/tmp/unzip/visits*.json';
 
+  use Time::HiRes;
+
   foreach my $file (@files) {
     say $file;
+    say Time::HiRes::time;
 
     open my $fl, "$file";
     my $st = <$fl>;
@@ -59,9 +64,12 @@ sub load {
     foreach my $val ( @{ $decoded->{$entity} } ) {
       my $status = $self->create( $entity, $val );
     }
+    say Time::HiRes::time;
   }
 
   say 'Loaded';
+
+  undef %LOCATIONS;
 
   return;
 }
@@ -76,23 +84,26 @@ sub create {
   }
 
   my $encoded = $JSON->encode($val);
-  $REDIS->set( 'val_' . $entity . '_' . $val->{id}, $encoded );
+  $REDIS->set( 'val_' . $entity . '_' . $val->{id}, $encoded, sub { } );
+
+  if ( $entity eq 'locations' ) {
+    $LOCATIONS{ $val->{id} } = $val;
+  }
 
   if ( $entity eq 'visits' ) {
-    $REDIS->zadd( 'val_users_visits_' . $val->{user},
-      $val->{visited_at}, $encoded );
+    my $location = $LOCATIONS{ $val->{location} };
 
-    my $location_enc = $REDIS->get( 'val_locations_' . $val->{location} );
-    my $location     = $JSON->decode($location_enc);
+    $REDIS->zadd( 'val_users_visits_' . $val->{user},
+      $val->{visited_at}, $encoded, sub { } );
 
     $REDIS->sadd(
       'val_countries_locations_' . encode_utf8( $location->{country} ),
-      $location_enc );
+      $encoded, sub { } );
 
     $REDIS->zadd( 'val_users_distances_locations_' . $val->{user},
-      $location->{distance}, $location_enc );
+      $location->{distance}, $encoded, sub { } );
 
-    $REDIS->sadd( 'val_users_locations_' . $val->{user}, $location_enc );
+    $REDIS->sadd( 'val_users_locations_' . $val->{user}, $encoded, sub { } );
   }
 
   return 1;
