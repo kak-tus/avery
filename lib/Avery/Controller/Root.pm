@@ -37,6 +37,11 @@ sub read {
 sub update {
   my $self = shift;
 
+  unless ( $self->req->json ) {
+    $self->render( json => {}, status => 400 );
+    return;
+  }
+
   my $status = $self->db->update( $self->stash('entity'),
     $self->stash('id'), $self->req->json );
 
@@ -55,6 +60,11 @@ sub update {
 
 sub create {
   my $self = shift;
+
+  unless ( $self->req->json ) {
+    $self->render( json => {}, status => 400 );
+    return;
+  }
 
   my $status = $self->db->create( $self->stash('entity'), $self->req->json );
 
