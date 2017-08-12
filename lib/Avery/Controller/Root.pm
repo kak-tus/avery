@@ -10,11 +10,11 @@ use Mojo::Base 'Mojolicious::Controller';
 sub routes {
   my $route = shift;
 
+  $route->get('/locations/:id/avg')->to('Root#avg');
+  $route->get('/users/:id/visits')->to('Root#users_visits');
   $route->get('/:entity/:id')->to('Root#read');
   $route->post('/:entity/new')->to('Root#create');
   $route->post('/:entity/:id')->to('Root#update');
-  $route->get('/users/:id/visits')->to('Root#visits');
-  $route->get('/locations/:id/avg')->to('Root#avg');
 
   return;
 }
@@ -68,10 +68,27 @@ sub create {
   return;
 }
 
-sub visits {
+sub users_visits {
   my $self = shift;
 
-  $self->render( json => { visits => [] } );
+  my %args = (
+    fromDate   => $self->param('fromDate'),
+    toDate     => $self->param('toDate'),
+    country    => $self->param('country'),
+    toDistance => $self->param('toDistance'),
+  );
+
+  my $vals = $self->db->users_visits( $self->stash('id'), %args );
+
+  if ( $vals == -1 ) {
+    $self->render( json => {}, status => 404 );
+  }
+  elsif ( $vals == -2 ) {
+    $self->render( json => {}, status => 400 );
+  }
+  else {
+    $self->render( json => { visits => $vals } );
+  }
 
   return;
 }
