@@ -5,13 +5,15 @@ use warnings;
 use v5.10;
 use utf8;
 
+use Clone qw(clone);
 use Cpanel::JSON::XS;
 use Data::Dumper;
 use Encode qw(encode_utf8);
 use List::Util qw(any);
 use RedisDB;
 
-my $JSON = Cpanel::JSON::XS->new->utf8;
+my $JSON      = Cpanel::JSON::XS->new->utf8;
+my $JSON_SORT = Cpanel::JSON::XS->new->utf8->canonical(1);
 my $REDIS;
 my %LOCATIONS;
 my %USERS;
@@ -32,6 +34,8 @@ my %VALIDATION = (
   fromDate   => { min => 0,         max => 2147483647, optional => 1 },
   toDate     => { min => 0,         max => 2147483647, optional => 1 },
   toDistance => { min => 0,         max => 2147483647, optional => 1 },
+  fromAge    => { min => 0,         max => 2147483647, optional => 1 },
+  toAge      => { min => 0,         max => 2147483647, optional => 1 },
 );
 
 sub new {
@@ -126,12 +130,8 @@ sub create {
     $REDIS->sadd( 'val_users_locations_' . $val->{user},
       $location_enc, sub { } );
 
-    ## $REDIS->incrby( 'val_locations_marks_sum_' . $val->{location},
-    ##   $val->{mark}, sub { } );
-    ## $REDIS->incr( 'val_locations_marks_count_' . $val->{location}, sub { } );
-
     my %user_visit = ( user => $user->{hash}, visit => $val );
-    my $user_visit_encoded = $JSON->encode( \%user_visit );
+    my $user_visit_encoded = $JSON_SORT->encode( \%user_visit );
 
     $REDIS->zadd( 'val_locations_users_visits_' . $val->{location},
       $val->{visited_at}, $user_visit_encoded, sub { } );
@@ -156,7 +156,9 @@ sub update {
   my $curr = $REDIS->get( 'val_' . $entity . '_' . $id );
   return -1 unless $curr;
 
-  my $decoded = $JSON->decode($curr);
+  my $decoded      = $JSON->decode($curr);
+  my $decoded_orig = clone($decoded);
+
   foreach my $key ( keys %$val ) {
     if ( $VALIDATION{$key} ) {
       return -2 if _validate( 'update', $key, $val->{$key} ) == -2;
@@ -167,6 +169,55 @@ sub update {
 
   my $encoded = $JSON->encode($decoded);
   $REDIS->set( 'val_' . $entity . '_' . $id, $encoded );
+
+  if ( $entity eq 'visits' ) {
+    $REDIS->zrem( 'val_users_visits_' . $decoded_orig->{user},
+      $curr, sub { } );
+    $REDIS->zadd(
+      'val_users_visits_' . $decoded->{user},
+      $decoded->{visited_at},
+      $encoded, sub { }
+    );
+
+    my $user_enc = $REDIS->get( 'val_users_' . $decoded_orig->{user} );
+    my $user = { hash => $JSON->decode($user_enc), encoded => $user_enc };
+
+    my %user_visit = ( user => $user->{hash}, visit => $decoded_orig );
+    my $user_visit_encoded = $JSON_SORT->encode( \%user_visit );
+
+    $REDIS->zrem( 'val_locations_users_visits_' . $decoded_orig->{location},
+      $user_visit_encoded, sub { } );
+
+    $user_enc = $REDIS->get( 'val_users_' . $decoded->{user} );
+    $user = { hash => $JSON->decode($user_enc), encoded => $user_enc };
+
+    %user_visit = ( user => $user->{hash}, visit => $decoded );
+    $user_visit_encoded = $JSON_SORT->encode( \%user_visit );
+
+    $REDIS->zadd(
+      'val_locations_users_visits_' . $decoded->{location},
+      $decoded->{visited_at},
+      $user_visit_encoded, sub { }
+    );
+  }
+  elsif ( $entity eq 'locations' ) {
+    $REDIS->srem(
+      'val_countries_locations_' . encode_utf8( $decoded_orig->{country} ),
+      $curr, sub { } );
+    $REDIS->sadd(
+      'val_countries_locations_' . encode_utf8( $decoded->{country} ),
+      $encoded, sub { } );
+
+    # $REDIS->zrem( 'val_users_distances_locations_' . $val->{user},
+    #   $location->{distance}, $location_enc, sub { } );
+    # $REDIS->zadd( 'val_users_distances_locations_' . $val->{user},
+    #   $location->{distance}, $location_enc, sub { } );
+
+    # $REDIS->sadd( 'val_users_locations_' . $val->{user},
+    #   $location_enc, sub { } );
+    # $REDIS->sadd( 'val_users_locations_' . $val->{user},
+    #   $location_enc, sub { } );
+  }
 
   return 1;
 }
@@ -295,13 +346,21 @@ sub avg {
 
     next if $params{gender} && $decoded->{user}{gender} ne $params{gender};
 
+    if ( $params{fromAge} || $params{toAge} ) {
+      my $age = int(
+        ( time - $decoded->{user}{birth_date} ) / ( 60 * 60 * 24 * 365 ) );
+
+      next if $params{fromAge} && $age <= $params{fromAge};
+      next if $params{toAge}   && $age >= $params{toAge};
+    }
+
     $cnt++;
     $sum += $decoded->{visit}{mark};
   }
 
-  return -1 unless $cnt;
+  return 0 unless $cnt;
 
-  my $avg = sprintf '%.5f', ( $sum / $cnt );
+  my $avg = sprintf( '%.5f', ( $sum / $cnt ) ) + 0;
   return $avg;
 }
 

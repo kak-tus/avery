@@ -12,6 +12,7 @@ RUN \
     unzip \
 
   && cpanm \
+    Clone \
     Cpanel::JSON::XS \
     Mojolicious \
     RedisDB \
