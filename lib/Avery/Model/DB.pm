@@ -67,9 +67,10 @@ sub load {
     say Time::HiRes::time;
   }
 
-  say 'Loaded';
+  $REDIS->mainloop;
 
-  undef %LOCATIONS;
+  say 'Loaded';
+  say Time::HiRes::time;
 
   return;
 }
@@ -147,13 +148,13 @@ sub _validate {
     if ( defined($val)
       && length($val) > $VALIDATION{$key}->{len} )
     {
-      say "fail $action key:$key";
+      ## say "fail $action key:$key";
       return -2;
     }
   }
   elsif ( $VALIDATION{$key}->{in} ) {
     if ( defined($val) && !$VALIDATION{$key}->{in}->{$val} ) {
-      say "fail $action key:$key";
+      ## say "fail $action key:$key";
       return -2;
     }
   }
@@ -164,7 +165,7 @@ sub _validate {
       || $val < $VALIDATION{$key}->{min}
       || $val > $VALIDATION{$key}->{max} )
     {
-      say "fail $action key:$key";
+      ## say "fail $action key:$key";
       return -2;
     }
   }
