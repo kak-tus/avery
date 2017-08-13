@@ -29,6 +29,10 @@ sub read {
     return;
   }
 
+  # $val->{id}       += 0;
+  # $val->{user}     += 0 if $val->{user};
+  # $val->{location} += 0 if $val->{location};
+
   $self->render( json => $val );
 
   return;
