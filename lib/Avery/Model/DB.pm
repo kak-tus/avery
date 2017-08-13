@@ -46,7 +46,7 @@ my %VALIDATION = (
 );
 
 my $SHARE = IPC::ShareLite->new(
-  -key     => 6,
+  -key     => 1,
   -create  => 'yes',
   -destroy => 'yes',
 ) or die $!;
@@ -302,8 +302,8 @@ sub _fork {
     $STAGE = 1;
     return unless $val;
 
-    $self->{logger}->info('Got from shared mem');
     $DAT = sereal_decode_with_object( $dec, $val );
+    $self->{logger}->info('Got from shared mem');
     $STAGE = 3;
   }
   elsif ( $STAGE == 2 ) {
@@ -311,11 +311,12 @@ sub _fork {
     $self->{logger}->info('Stage 3');
 
     $SHARE->store( sereal_encode_with_object( $enc, $DAT ) );
+    $self->{logger}->info('Stored');
 
     kill 'TTIN', $self->{parent_pid};
-    Time::HiRes::usleep(5);
+    Time::HiRes::usleep(1);
     kill 'TTIN', $self->{parent_pid};
-    Time::HiRes::usleep(5);
+    Time::HiRes::usleep(1);
     kill 'TTIN', $self->{parent_pid};
   }
 
