@@ -60,7 +60,8 @@ sub new {
   my $parent = shift;
   my %params = @_;
 
-  return bless { parent_pid => $params{parent_pid} };
+  return
+      bless { parent_pid => $params{parent_pid}, logger => $params{logger} };
 }
 
 sub load {
@@ -71,7 +72,7 @@ sub load {
   push @files, glob '/tmp/unzip/visits*.json';
 
   my $start = Time::HiRes::time;
-  say "Start $start";
+  $self->{logger}->info("Start $start");
 
   foreach my $file (@files) {
     open my $fl, "$file";
@@ -88,7 +89,7 @@ sub load {
   }
 
   my $end = Time::HiRes::time;
-  say "Loaded $end, diff " . ( $end - $start );
+  $self->{logger}->info( "Loaded $end, diff " . ( $end - $start ) );
 
   $STAGE = 0;
 
@@ -296,18 +297,18 @@ sub _fork {
   my $self = shift;
 
   if ( $STAGE == 0 ) {
-    say 'Just forked';
+    $self->{logger}->info('Just forked');
     my $val = $SHARE->fetch;
     $STAGE = 1;
     return unless $val;
 
-    say 'Got from shared mem';
+    $self->{logger}->info('Got from shared mem');
     $DAT = sereal_decode_with_object( $dec, $val );
     $STAGE = 3;
   }
   elsif ( $STAGE == 2 ) {
     $STAGE = 3;
-    say 'Stage 3';
+    $self->{logger}->info('Stage 3');
 
     $SHARE->store( sereal_encode_with_object( $enc, $DAT ) );
 

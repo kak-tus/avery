@@ -29,7 +29,7 @@ sub startup {
       state $db;
       return $db if $db;
 
-      $db = Avery::Model::DB->new( parent_pid => $pid );
+      $db = Avery::Model::DB->new( parent_pid => $pid, logger => $self->log );
       return $db;
     }
   );
@@ -42,6 +42,10 @@ sub startup {
         workers => 1,
         accepts => 0,
         clients => 5000,
+        ## backlog            => 65535,
+        heartbeat_interval => 30,
+        heartbeat_timeout  => 30,
+        inactivity_timeout => 30,
       }
     }
   );
