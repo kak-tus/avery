@@ -15,7 +15,14 @@ RUN \
     unzip \
 
   && cpanm \
-    Mojolicious
+    Mojolicious \
+
+  && apt-get purge -y --auto-remove \
+    build-essential \
+    ca-certificates \
+    cpanminus \
+
+  && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 80
 
