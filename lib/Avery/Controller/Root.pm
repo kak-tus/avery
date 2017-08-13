@@ -29,7 +29,7 @@ sub read {
     return;
   }
 
-  $self->render( data => $val );
+  $self->render( json => $val );
 
   return;
 }
@@ -37,13 +37,14 @@ sub read {
 sub update {
   my $self = shift;
 
-  unless ( $self->req->json ) {
+  my $val = $self->req->json;
+  unless ( $val && keys %$val ) {
     $self->render( json => {}, status => 400 );
     return;
   }
 
-  my $status = $self->db->update( $self->stash('entity'),
-    $self->stash('id'), $self->req->json );
+  my $status
+      = $self->db->update( $self->stash('entity'), $self->stash('id'), $val );
 
   if ( $status == 1 ) {
     $self->render( json => {} );
@@ -61,12 +62,13 @@ sub update {
 sub create {
   my $self = shift;
 
-  unless ( $self->req->json ) {
+  my $val = $self->req->json;
+  unless ( $val && keys %$val ) {
     $self->render( json => {}, status => 400 );
     return;
   }
 
-  my $status = $self->db->create( $self->stash('entity'), $self->req->json );
+  my $status = $self->db->create( $self->stash('entity'), $val );
 
   if ( $status == 1 ) {
     $self->render( json => {} );
@@ -81,12 +83,11 @@ sub create {
 sub users_visits {
   my $self = shift;
 
-  my %args = (
-    fromDate   => $self->param('fromDate'),
-    toDate     => $self->param('toDate'),
-    country    => $self->param('country'),
-    toDistance => $self->param('toDistance'),
-  );
+  my %args;
+  foreach (qw( fromDate toDate country toDistance )) {
+    next unless defined $self->param($_);
+    $args{$_} = $self->param($_);
+  }
 
   my $vals = $self->db->users_visits( $self->stash('id'), %args );
 
@@ -106,13 +107,11 @@ sub users_visits {
 sub avg {
   my $self = shift;
 
-  my %args = (
-    fromDate => $self->param('fromDate'),
-    toDate   => $self->param('toDate'),
-    fromAge  => $self->param('fromAge'),
-    toAge    => $self->param('toAge'),
-    gender   => $self->param('gender'),
-  );
+  my %args;
+  foreach (qw( fromDate toDate fromAge toAge gender )) {
+    next unless defined $self->param($_);
+    $args{$_} = $self->param($_);
+  }
 
   my $avg = $self->db->avg( $self->stash('id'), %args );
 

@@ -6,6 +6,4 @@ cd /tmp/unzip
 unzip data.zip > /dev/null
 cd /
 
-redis-server /etc/redis/redis.conf
-
 hypnotoad -f /usr/local/bin/avery.pl

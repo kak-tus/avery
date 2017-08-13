@@ -38,7 +38,7 @@ sub startup {
   $self->config(
     { hypnotoad => {
         listen  => ['http://0.0.0.0:80'],
-        workers => 2,
+        workers => 1,
         accepts => 0,
       }
     }

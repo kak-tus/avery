@@ -9,16 +9,17 @@ use Clone qw(clone);
 use Cpanel::JSON::XS;
 use Data::Dumper;
 use DateTime;
+use DateTime::TimeZone;
 use Encode qw(encode_utf8);
 use List::Util qw(any);
-use RedisDB;
 use Time::HiRes;
 
-my $JSON      = Cpanel::JSON::XS->new->utf8;
-my $JSON_SORT = Cpanel::JSON::XS->new->utf8->canonical(1);
-my $REDIS;
-my %LOCATIONS;
-my %USERS;
+my $DAT;
+
+my $JSON = Cpanel::JSON::XS->new->utf8;
+
+my $TZ = DateTime::TimeZone->new( name => 'UTC' );
+my $TODAY = DateTime->today( time_zone => $TZ );
 
 my %VALIDATION = (
   id         => { min => 1, max => 2147483647 },
@@ -43,8 +44,6 @@ my %VALIDATION = (
 );
 
 sub new {
-  $REDIS = RedisDB->new( path => '/var/run/redis/redis.sock' );
-
   return bless {};
 }
 
@@ -72,11 +71,6 @@ sub load {
     }
   }
 
-  $REDIS->mainloop;
-
-  undef %LOCATIONS;
-  undef %USERS;
-
   my $end = Time::HiRes::time;
   say "Loaded $end, diff " . ( $end - $start );
 
@@ -95,43 +89,15 @@ sub create {
     }
   }
 
-  my $encoded = $JSON->encode($val);
-  $REDIS->set( 'val_' . $entity . '_' . $val->{id}, $encoded, sub { } );
-
-  if ( $entity eq 'locations' ) {
-    $LOCATIONS{ $val->{id} } = { hash => $val, encoded => $encoded };
-  }
-  elsif ( $entity eq 'users' ) {
-    $USERS{ $val->{id} } = { hash => $val, encoded => $encoded };
-  }
+  $DAT->{$entity}{ $val->{id} } = $val;
 
   if ( $entity eq 'visits' ) {
-    my $location     = $LOCATIONS{ $val->{location} }->{hash};
-    my $location_enc = $LOCATIONS{ $val->{location} }->{encoded};
-    my $user         = $USERS{ $val->{user} };
-
-    unless ($location) {
-      $location_enc = $REDIS->get( 'val_locations_' . $val->{location} );
-      $location     = $JSON->decode($location_enc);
-    }
-
-    unless ($user) {
-      my $user_enc = $REDIS->get( 'val_users_' . $val->{user} );
-      $user = { hash => $JSON->decode($user_enc), encoded => $user_enc };
-    }
-
-    my %user_visits_locations = ( visit => $val, location => $location );
-    my $user_visits_locations_enc
-        = $JSON_SORT->encode( \%user_visits_locations );
-
-    $REDIS->zadd( 'val_users_visits_locations_' . $val->{user},
-      $val->{visited_at}, $user_visits_locations_enc, sub { } );
-
-    my %user_visit = ( user => $user->{hash}, visit => $val );
-    my $user_visit_encoded = $JSON_SORT->encode( \%user_visit );
-
-    $REDIS->zadd( 'val_locations_users_visits_' . $val->{location},
-      $val->{visited_at}, $user_visit_encoded, sub { } );
+    $DAT->{_location_visit_by_user}{ $val->{user} }{ $val->{id} } = {
+      location => $DAT->{locations}{ $val->{location} },
+      visit    => $val
+    };
+    $DAT->{_user_visit_by_location}{ $val->{location} }{ $val->{id} }
+        = { user => $DAT->{users}{ $val->{user} }, visit => $val };
   }
 
   return 1;
@@ -141,85 +107,45 @@ sub read {
   my $self = shift;
   my ( $entity, $id ) = @_;
 
-  my $val = $REDIS->get( 'val_' . $entity . '_' . $id );
-
-  return $val;
+  return $DAT->{$entity}{$id};
 }
 
 sub update {
   my $self = shift;
   my ( $entity, $id, $val ) = @_;
 
-  my $curr = $REDIS->get( 'val_' . $entity . '_' . $id );
-  return -1 unless $curr;
-
-  my $decoded      = $JSON->decode($curr);
-  my $decoded_orig = clone($decoded);
+  my $orig = $DAT->{$entity}{$id};
+  return -1 unless $orig;
 
   foreach my $key ( keys %$val ) {
     if ( $VALIDATION{$key} ) {
       return -2 if _validate( 'update', $key, $val->{$key} ) == -2;
     }
-
-    $decoded->{$key} = $val->{$key};
   }
 
-  my $encoded = $JSON->encode($decoded);
-  $REDIS->set( 'val_' . $entity . '_' . $id, $encoded );
-
-  if ( $entity eq 'visits' ) {
-    my $user_orig_enc = $REDIS->get( 'val_users_' . $decoded_orig->{user} );
-    my $user_orig     = {
-      hash    => $JSON->decode($user_orig_enc),
-      encoded => $user_orig_enc,
+  if ( $entity eq 'visits'
+    && $val->{user}
+    && $val->{user} != $orig->{user} )
+  {
+    delete $DAT->{_location_visit_by_user}{ $orig->{user} }{$id};
+    $DAT->{_location_visit_by_user}{ $val->{user} }{$id} = {
+      location => $DAT->{locations}{ $val->{location} || $orig->{location} },
+      visit => $orig,
     };
+  }
+  if ( $entity eq 'visits'
+    && $val->{location}
+    && $val->{location} != $orig->{location} )
+  {
+    delete $DAT->{_user_visit_by_location}{ $orig->{location} }{$id};
+    $DAT->{_user_visit_by_location}{ $val->{location} }{$id} = {
+      user => $DAT->{users}{ $val->{user} || $orig->{user} },
+      visit => $orig,
+    };
+  }
 
-    my $user_enc = $REDIS->get( 'val_users_' . $decoded->{user} );
-    my $user = { hash => $JSON->decode($user_enc), encoded => $user_enc };
-
-    my $location_orig_enc
-        = $REDIS->get( 'val_locations_' . $decoded_orig->{location} );
-    my $location_orig = $JSON->decode($location_orig_enc);
-
-    my $location_enc = $REDIS->get( 'val_locations_' . $decoded->{location} );
-    my $location     = $JSON->decode($location_enc);
-
-    my %user_visits_locations_orig
-        = ( visit => $decoded_orig, location => $location_orig );
-    my $user_visits_locations_orig_enc
-        = $JSON_SORT->encode( \%user_visits_locations_orig );
-
-    $REDIS->zrem(
-      'val_users_visits_locations_' . $decoded_orig->{user},
-      $user_visits_locations_orig_enc,
-      sub { }
-    );
-
-    my %user_visits_locations = ( visit => $decoded, location => $location );
-    my $user_visits_locations_enc
-        = $JSON_SORT->encode( \%user_visits_locations );
-
-    $REDIS->zadd(
-      'val_users_visits_locations_' . $decoded->{user},
-      $decoded->{visited_at},
-      $user_visits_locations_enc, sub { }
-    );
-
-    my %user_visit_orig
-        = ( user => $user_orig->{hash}, visit => $decoded_orig );
-    my $user_visit_orig_enc = $JSON_SORT->encode( \%user_visit_orig );
-
-    $REDIS->zrem( 'val_locations_users_visits_' . $decoded_orig->{location},
-      $user_visit_orig_enc, sub { } );
-
-    my %user_visit = ( user => $user->{hash}, visit => $decoded );
-    my $user_visit_enc = $JSON_SORT->encode( \%user_visit );
-
-    $REDIS->zadd(
-      'val_locations_users_visits_' . $decoded->{location},
-      $decoded->{visited_at},
-      $user_visit_enc, sub { }
-    );
+  foreach my $key ( keys %$val ) {
+    $orig->{$key} = $val->{$key};
   }
 
   return 1;
@@ -229,16 +155,14 @@ sub _validate {
   my ( $action, $key, $val ) = @_;
 
   if ( $VALIDATION{$key}->{len} ) {
-    if ( defined($val)
-      && length($val) > $VALIDATION{$key}->{len} )
+    if (!defined($val)
+      || length($val) > $VALIDATION{$key}->{len} )
     {
-      ## say "fail $action key:$key";
       return -2;
     }
   }
   elsif ( $VALIDATION{$key}->{in} ) {
-    if ( defined($val) && !$VALIDATION{$key}->{in}->{$val} ) {
-      ## say "fail $action key:$key";
+    if ( !defined($val) || !$VALIDATION{$key}->{in}->{$val} ) {
       return -2;
     }
   }
@@ -249,7 +173,6 @@ sub _validate {
       || $val < $VALIDATION{$key}->{min}
       || $val > $VALIDATION{$key}->{max} )
     {
-      ## say "fail $action key:$key";
       return -2;
     }
   }
@@ -267,36 +190,33 @@ sub users_visits {
     return -2 if _validate( 'users_visits', $key, $params{$key} ) == -2;
   }
 
-  return -1 unless $REDIS->exists( 'val_users_' . $id );
-
-  my $from = $params{fromDate} // 0;
-  my $to   = $params{toDate}   // 2147483647;
-
-  my $vals = $REDIS->zrangebyscore( 'val_users_visits_locations_' . $id,
-    "($from", "($to" );
-  return -1 unless $vals;
+  return -1 unless $DAT->{users}{$id};
 
   my @res;
 
-  foreach my $val (@$vals) {
-    my $decoded = $JSON->decode($val);
+  foreach my $val ( values %{ $DAT->{_location_visit_by_user}{$id} } ) {
+    next
+        if $params{fromDate}
+        && $val->{visit}{visited_at} < $params{fromDate};
+    next if $params{toDate} && $val->{visit}{visited_at} > $params{toDate};
 
     next
         if defined $params{country}
-        && $decoded->{location}{country} ne $params{country};
+        && $val->{location}{country} ne $params{country};
     next
         if defined $params{toDistance}
-        && $decoded->{location}{distance} >= $params{toDistance};
+        && $val->{location}{distance} >= $params{toDistance};
 
     my %visit = (
-      mark       => $decoded->{visit}{mark},
-      visited_at => $decoded->{visit}{visited_at},
-      place      => $decoded->{location}->{place},
+      mark       => $val->{visit}{mark},
+      visited_at => $val->{visit}{visited_at},
+      place      => $val->{location}{place},
     );
     push @res, \%visit;
   }
 
-  return \@res;
+  my @sorted = sort { $a->{visited_at} <=> $b->{visited_at} } @res;
+  return \@sorted;
 }
 
 sub avg {
@@ -309,35 +229,33 @@ sub avg {
     return -2 if _validate( 'avg', $key, $params{$key} ) == -2;
   }
 
-  return -1 unless $REDIS->exists( 'val_locations_' . $id );
-
-  my $from = $params{fromDate} // 0;
-  my $to   = $params{toDate}   // 2147483647;
-
-  my $vals = $REDIS->zrangebyscore( 'val_locations_users_visits_' . $id,
-    "($from", "($to" );
-  return -1 unless $vals;
+  return -1 unless $DAT->{locations}{$id};
 
   my ( $sum, $cnt ) = ( 0, 0 );
 
-  foreach my $val (@$vals) {
-    my $decoded = $JSON->decode($val);
+  my ( $dt_from, $dt_to );
 
-    next if $params{gender} && $decoded->{user}{gender} ne $params{gender};
+  if ( $params{fromAge} ) {
+    $dt_from
+        = $TODAY->clone->subtract( years => $params{fromAge} )->epoch();
+  }
+  if ( $params{toAge} ) {
+    $dt_to = $TODAY->clone->subtract( years => $params{toAge} )->epoch();
+  }
 
-    if ( $params{fromAge} || $params{toAge} ) {
-      my $dt1 = DateTime->from_epoch( epoch => $decoded->{user}{birth_date} );
-      my $dt2 = DateTime->today( time_zone => 'UTC' );
-      my $dur = $dt2->subtract_datetime($dt1);
+  foreach my $val ( values %{ $DAT->{_user_visit_by_location}{$id} } ) {
+    next
+        if $params{fromDate}
+        && $val->{visit}{visited_at} < $params{fromDate};
+    next if $params{toDate} && $val->{visit}{visited_at} > $params{toDate};
 
-      my $age = $dur->years;
+    next if $params{gender} && $val->{user}{gender} ne $params{gender};
 
-      next if $params{fromAge} && $age <= $params{fromAge};
-      next if $params{toAge}   && $age >= $params{toAge};
-    }
+    next if $dt_from && $dt_from < $val->{user}{birth_date};
+    next if $dt_to   && $dt_to >= $val->{user}{birth_date};
 
     $cnt++;
-    $sum += $decoded->{visit}{mark};
+    $sum += $val->{visit}{mark};
   }
 
   return 0 unless $cnt;

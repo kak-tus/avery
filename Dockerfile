@@ -10,19 +10,13 @@ RUN \
     libclone-perl \
     libcpanel-json-xs-perl \
     libdatetime-perl \
-    libmodule-install-perl \
-    redis-server \
     unzip \
 
   && cpanm \
-    Mojolicious \
-    RedisDB \
-
-  && mkdir -p /var/run/redis
+    Mojolicious
 
 EXPOSE 80
 
-COPY redis.conf /etc/redis/redis.conf
 COPY start.sh /usr/local/bin/start.sh
 COPY bin/avery.pl /usr/local/bin/avery.pl
 COPY lib /usr/share/perl5
