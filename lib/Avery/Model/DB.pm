@@ -5,7 +5,6 @@ use warnings;
 use v5.10;
 use utf8;
 
-use AnyEvent;
 use Clone qw(clone);
 use Cpanel::JSON::XS;
 use Data::Dumper;
@@ -14,12 +13,8 @@ use DateTime::TimeZone;
 use Encode qw(encode_utf8);
 use IPC::ShareLite;
 use List::Util qw(any);
-use Sereal qw(sereal_encode_with_object sereal_decode_with_object);
-use Storable qw( freeze thaw );
 use Time::HiRes;
-
-my $enc = Sereal::Encoder->new();
-my $dec = Sereal::Decoder->new();
+use Storable qw( freeze thaw );
 
 my $DAT;
 
@@ -62,8 +57,6 @@ my %VALIDATION = (
   fromAge    => { min => 0, max => 2147483647, optional => 1 },
   toAge      => { min => 0, max => 2147483647, optional => 1 },
 );
-
-my $TIMER;
 
 sub new {
   return bless {};
@@ -310,18 +303,17 @@ sub avg {
 }
 
 sub _update_share {
-  $SHARE->store( sereal_encode_with_object( $enc, $DAT ) );
+  $SHARE->store(freeze($DAT));
   $UPDATE_TIME = Time::HiRes::time;
   $SHARE_TIME->store($UPDATE_TIME);
-
   return;
 }
 
 sub _read_share {
   my $upd = $SHARE_TIME->fetch;
-  return if $UPDATE_TIME && $upd eq $UPDATE_TIME;
+  return if $upd eq $UPDATE_TIME;
 
-  $DAT = sereal_decode_with_object( $dec, $SHARE->fetch );
+  $DAT         = thaw( $SHARE->fetch );
   $UPDATE_TIME = $upd;
 
   return;

@@ -7,13 +7,10 @@ RUN \
     build-essential \
     ca-certificates \
     cpanminus \
-    libanyevent-perl \
     libclone-perl \
     libcpanel-json-xs-perl \
     libdatetime-perl \
-    libev-perl \
     libipc-sharelite-perl \
-    libsereal-perl \
     unzip \
 
   && cpanm \
