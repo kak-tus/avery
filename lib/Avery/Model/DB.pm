@@ -11,8 +11,10 @@ use Data::Dumper;
 use DateTime;
 use DateTime::TimeZone;
 use Encode qw(encode_utf8);
+use IPC::ShareLite;
 use List::Util qw(any);
 use Time::HiRes;
+use Storable qw( freeze thaw );
 
 my $DAT;
 
@@ -20,6 +22,19 @@ my $JSON = Cpanel::JSON::XS->new->utf8;
 
 my $TZ = DateTime::TimeZone->new( name => 'UTC' );
 my $TODAY = DateTime->today( time_zone => $TZ );
+
+my $SHARE = IPC::ShareLite->new(
+  -key     => 2,
+  -create  => 'yes',
+  -destroy => 'yes',
+) or die $!;
+
+my $UPDATE_TIME;
+my $SHARE_TIME = IPC::ShareLite->new(
+  -key     => 3,
+  -create  => 'yes',
+  -destroy => 'yes',
+) or die $!;
 
 my %VALIDATION = (
   id         => { min => 1, max => 2147483647 },
@@ -67,9 +82,15 @@ sub load {
     my $entity = ( keys %$decoded )[0];
 
     foreach my $val ( @{ $decoded->{$entity} } ) {
-      my $status = $self->create( $entity, $val, without_validation => 1 );
+      my $status = $self->create(
+        $entity, $val,
+        without_validation => 1,
+        without_store      => 1,
+      );
     }
   }
+
+  _update_share();
 
   my $end = Time::HiRes::time;
   say "Loaded $end, diff " . ( $end - $start );
@@ -89,6 +110,10 @@ sub create {
     }
   }
 
+  if ( !$params{without_store} ) {
+    _read_share();
+  }
+
   $DAT->{$entity}{ $val->{id} } = $val;
 
   if ( $entity eq 'visits' ) {
@@ -100,6 +125,10 @@ sub create {
         = { user => $DAT->{users}{ $val->{user} }, visit => $val };
   }
 
+  if ( !$params{without_store} ) {
+    _update_share();
+  }
+
   return 1;
 }
 
@@ -107,12 +136,15 @@ sub read {
   my $self = shift;
   my ( $entity, $id ) = @_;
 
+  _read_share();
   return $DAT->{$entity}{$id};
 }
 
 sub update {
   my $self = shift;
   my ( $entity, $id, $val ) = @_;
+
+  _read_share();
 
   my $orig = $DAT->{$entity}{$id};
   return -1 unless $orig;
@@ -147,6 +179,8 @@ sub update {
   foreach my $key ( keys %$val ) {
     $orig->{$key} = $val->{$key};
   }
+
+  _update_share();
 
   return 1;
 }
@@ -190,6 +224,8 @@ sub users_visits {
     return -2 if _validate( 'users_visits', $key, $params{$key} ) == -2;
   }
 
+  _read_share();
+
   return -1 unless $DAT->{users}{$id};
 
   my @res;
@@ -229,6 +265,8 @@ sub avg {
     return -2 if _validate( 'avg', $key, $params{$key} ) == -2;
   }
 
+  _read_share();
+
   return -1 unless $DAT->{locations}{$id};
 
   my ( $sum, $cnt ) = ( 0, 0 );
@@ -262,6 +300,23 @@ sub avg {
 
   my $avg = sprintf( '%.5f', ( $sum / $cnt ) ) + 0;
   return $avg;
+}
+
+sub _update_share {
+  $SHARE->store(freeze($DAT));
+  $UPDATE_TIME = Time::HiRes::time;
+  $SHARE_TIME->store($UPDATE_TIME);
+  return;
+}
+
+sub _read_share {
+  my $upd = $SHARE_TIME->fetch;
+  return if $upd eq $UPDATE_TIME;
+
+  $DAT         = thaw( $SHARE->fetch );
+  $UPDATE_TIME = $upd;
+
+  return;
 }
 
 1;
