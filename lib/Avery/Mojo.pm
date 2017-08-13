@@ -33,6 +33,9 @@ sub startup {
     }
   );
 
+  my $pid = $$;
+  $self->helper( parent_pid => sub { return $pid } );
+
   $self->db->load();
 
   $self->config(
@@ -40,6 +43,7 @@ sub startup {
         listen  => ['http://0.0.0.0:80'],
         workers => 1,
         accepts => 0,
+        clients => 5000,
       }
     }
   );

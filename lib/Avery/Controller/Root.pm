@@ -7,6 +7,8 @@ use utf8;
 
 use Mojo::Base 'Mojolicious::Controller';
 
+my $STAGE = 1;
+
 sub routes {
   my $route = shift;
 
@@ -22,6 +24,11 @@ sub routes {
 sub read {
   my $self = shift;
 
+  if ( $STAGE == 2 ) {
+    $STAGE = 3;
+    kill 'TTIN', $self->parent_pid;
+  }
+
   my $val = $self->db->read( $self->stash('entity'), $self->stash('id') );
 
   unless ($val) {
@@ -36,6 +43,8 @@ sub read {
 
 sub update {
   my $self = shift;
+
+  $STAGE = 2;
 
   my $val = $self->req->json;
   unless ( $val && keys %$val ) {
@@ -61,6 +70,8 @@ sub update {
 
 sub create {
   my $self = shift;
+
+  $STAGE = 2;
 
   my $val = $self->req->json;
   unless ( $val && keys %$val ) {
