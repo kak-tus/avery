@@ -10,6 +10,8 @@ RUN \
     libclone-perl \
     libcpanel-json-xs-perl \
     libdatetime-perl \
+    libipc-sharelite-perl \
+    libsereal-perl \
     unzip \
 
   && cpanm \

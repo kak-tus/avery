@@ -23,18 +23,16 @@ sub startup {
 
   Avery::Controller::Root::routes($route);
 
+  my $pid = $$;
   $self->helper(
     db => sub {
       state $db;
       return $db if $db;
 
-      $db = Avery::Model::DB->new;
+      $db = Avery::Model::DB->new( parent_pid => $pid );
       return $db;
     }
   );
-
-  my $pid = $$;
-  $self->helper( parent_pid => sub { return $pid } );
 
   $self->db->load();
 

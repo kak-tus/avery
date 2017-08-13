@@ -11,7 +11,9 @@ use Data::Dumper;
 use DateTime;
 use DateTime::TimeZone;
 use Encode qw(encode_utf8);
+use IPC::ShareLite;
 use List::Util qw(any);
+use Sereal qw(sereal_encode_with_object sereal_decode_with_object);
 use Time::HiRes;
 
 my $DAT;
@@ -43,8 +45,22 @@ my %VALIDATION = (
   toAge      => { min => 0, max => 2147483647, optional => 1 },
 );
 
+my $SHARE = IPC::ShareLite->new(
+  -key     => 6,
+  -create  => 'yes',
+  -destroy => 'yes',
+) or die $!;
+
+my $STAGE = 0;
+
+my $enc = Sereal::Encoder->new();
+my $dec = Sereal::Decoder->new();
+
 sub new {
-  return bless {};
+  my $parent = shift;
+  my %params = @_;
+
+  return bless { parent_pid => $params{parent_pid} };
 }
 
 sub load {
@@ -74,6 +90,8 @@ sub load {
   my $end = Time::HiRes::time;
   say "Loaded $end, diff " . ( $end - $start );
 
+  $STAGE = 0;
+
   return;
 }
 
@@ -81,6 +99,8 @@ sub create {
   my $self = shift;
   my ( $entity, $val ) = ( shift, shift );
   my %params = @_;
+
+  $STAGE = 2;
 
   if ( !$params{without_validation} ) {
     foreach my $key ( keys %$val ) {
@@ -107,12 +127,16 @@ sub read {
   my $self = shift;
   my ( $entity, $id ) = @_;
 
+  $self->_fork();
+
   return $DAT->{$entity}{$id};
 }
 
 sub update {
   my $self = shift;
   my ( $entity, $id, $val ) = @_;
+
+  $STAGE = 2;
 
   my $orig = $DAT->{$entity}{$id};
   return -1 unless $orig;
@@ -190,6 +214,8 @@ sub users_visits {
     return -2 if _validate( 'users_visits', $key, $params{$key} ) == -2;
   }
 
+  $self->_fork();
+
   return -1 unless $DAT->{users}{$id};
 
   my @res;
@@ -229,6 +255,8 @@ sub avg {
     return -2 if _validate( 'avg', $key, $params{$key} ) == -2;
   }
 
+  $self->_fork();
+
   return -1 unless $DAT->{locations}{$id};
 
   my ( $sum, $cnt ) = ( 0, 0 );
@@ -262,6 +290,35 @@ sub avg {
 
   my $avg = sprintf( '%.5f', ( $sum / $cnt ) ) + 0;
   return $avg;
+}
+
+sub _fork {
+  my $self = shift;
+
+  if ( $STAGE == 0 ) {
+    say 'Just forked';
+    my $val = $SHARE->fetch;
+    $STAGE = 1;
+    return unless $val;
+
+    say 'Got from shared mem';
+    $DAT = sereal_decode_with_object( $dec, $val );
+    $STAGE = 3;
+  }
+  elsif ( $STAGE == 2 ) {
+    $STAGE = 3;
+    say 'Stage 3';
+
+    $SHARE->store( sereal_encode_with_object( $enc, $DAT ) );
+
+    kill 'TTIN', $self->{parent_pid};
+    Time::HiRes::usleep(5);
+    kill 'TTIN', $self->{parent_pid};
+    Time::HiRes::usleep(5);
+    kill 'TTIN', $self->{parent_pid};
+  }
+
+  return;
 }
 
 1;
