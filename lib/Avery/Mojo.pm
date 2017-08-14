@@ -38,11 +38,11 @@ sub startup {
 
   $self->config(
     { hypnotoad => {
-        listen  => ['http://0.0.0.0:80'],
-        workers => 1,
-        accepts => 0,
-        clients => 5000,
-        ## backlog            => 65535,
+        listen             => ['http://0.0.0.0:80'],
+        workers            => 1,
+        accepts            => 0,
+        clients            => 5000,
+        backlog            => 100000,
         heartbeat_interval => 30,
         heartbeat_timeout  => 30,
         inactivity_timeout => 30,
