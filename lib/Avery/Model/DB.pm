@@ -115,7 +115,7 @@ sub create {
   if ( $entity eq 'visits' ) {
     $DAT->{_location_visit_by_user}{ $val->{user} }{ $val->{id} } = {
       location => $DAT->{locations}{ $val->{location} },
-      visit    => $val
+      visit    => $val,
     };
     $DAT->{_user_visit_by_location}{ $val->{location} }{ $val->{id} }
         = { user => $DAT->{users}{ $val->{user} }, visit => $val };
@@ -296,12 +296,15 @@ sub avg {
 sub _fork {
   my $self = shift;
 
+  return unless $self->{parent_pid};
+
   if ( $STAGE == 0 ) {
     $self->{logger}->info('Just forked');
     my $val = $SHARE->fetch;
     $STAGE = 1;
     return unless $val;
 
+    undef $DAT;
     $DAT = sereal_decode_with_object( $dec, $val );
     $self->{logger}->info('Got from shared mem');
     $STAGE = 3;
@@ -315,9 +318,6 @@ sub _fork {
 
     kill 'TTIN', $self->{parent_pid};
     Time::HiRes::usleep(1);
-    kill 'TTIN', $self->{parent_pid};
-    Time::HiRes::usleep(1);
-    kill 'TTIN', $self->{parent_pid};
   }
 
   return;

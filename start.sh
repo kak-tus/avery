@@ -6,4 +6,4 @@ cd /tmp/unzip
 unzip data.zip > /dev/null
 cd /
 
-hypnotoad -f /usr/local/bin/avery.pl
+/usr/local/bin/avery_httpd.pl

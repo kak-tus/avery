@@ -7,10 +7,13 @@ RUN \
     build-essential \
     ca-certificates \
     cpanminus \
+    libanyevent-httpd-perl \
     libclone-perl \
     libcpanel-json-xs-perl \
     libdatetime-perl \
+    libhttp-server-simple-perl \
     libipc-sharelite-perl \
+    libmemory-usage-perl \
     libsereal-perl \
     unzip \
 
@@ -27,7 +30,7 @@ RUN \
 EXPOSE 80
 
 COPY start.sh /usr/local/bin/start.sh
-COPY bin/avery.pl /usr/local/bin/avery.pl
+COPY bin /usr/local/bin
 COPY lib /usr/share/perl5
 
 CMD ["/usr/local/bin/start.sh"]
