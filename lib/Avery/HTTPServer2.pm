@@ -66,7 +66,10 @@ sub run {
     cb   => sub {
       my $req = shift;
 
-      if ( $req->method eq 'POST' && $req->headers->{'content-length'} > 0 ) {
+      if ( $req->method eq 'POST'
+        && $req->headers->{'content-length'}
+        && $req->headers->{'content-length'} > 0 )
+      {
         return HANDLE => sub {
           my $h = $_[0];
           $h->on_read(
