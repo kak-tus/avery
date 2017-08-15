@@ -152,8 +152,8 @@ sub update {
 
   if (
     $entity eq 'users'
-    && ( ( $new->{gender} ne $orig->{gender} )
-      || ( $new->{birth_date} ne $orig->{birth_date} ) )
+    && ( $new->{gender} ne $orig->{gender}
+      || $new->{birth_date} ne $orig->{birth_date} )
       )
   {
     my $orig_years = _years( $orig->{birth_date} );
@@ -181,9 +181,10 @@ sub update {
 
   if (
     $entity eq 'visits'
-    && ( ( $new->{location} ne $orig->{location} )
-      || ( $new->{visited_at} ne $orig->{visited_at} )
-      || ( $new->{user} ne $orig->{user} ) )
+    && ( $new->{location} ne $orig->{location}
+      || $new->{visited_at} ne $orig->{visited_at}
+      || $new->{user} ne $orig->{user}
+      || $new->{mark} ne $orig->{mark} )
       )
   {
     my $orig_years = _years( $DAT->{users}{ $orig->{user} }{birth_date} );
@@ -193,7 +194,7 @@ sub update {
         {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }{cnt}--;
     $DAT->{_location_avg}{ $orig->{location} }{ $orig->{visited_at} }
         {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }{sum}
-        -= $new->{mark};
+        -= $orig->{mark};
 
     $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
         { $DAT->{users}{ $new->{user} }{gender} } ||= { cnt => 0, sum => 0 };
@@ -202,6 +203,19 @@ sub update {
         { $DAT->{users}{ $new->{user} }{gender} }{cnt}++;
     $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
         { $DAT->{users}{ $new->{user} }{gender} }{sum} += $new->{mark};
+
+    $DAT->{_user_avg}{ $orig->{user} }{ $orig->{location} }
+        { $orig->{visited_at} }{cnt}--;
+    $DAT->{_user_avg}{ $orig->{user} }{ $orig->{location} }
+        { $orig->{visited_at} }{sum} -= $orig->{mark};
+
+    $DAT->{_user_avg}{ $new->{user} }{ $new->{location} }
+        { $new->{visited_at} } ||= { cnt => 0, sum => 0 };
+
+    $DAT->{_user_avg}{ $new->{user} }{ $new->{location} }
+        { $new->{visited_at} }{cnt}++;
+    $DAT->{_user_avg}{ $new->{user} }{ $new->{location} }
+        { $new->{visited_at} }{sum} += $new->{mark};
   }
 
   if (
