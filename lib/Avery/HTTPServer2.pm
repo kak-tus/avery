@@ -87,8 +87,11 @@ sub run {
     }
   );
 
+  $httpd->{backlog} = 5000;
+
   $httpd->listen;
   $httpd->accept;
+
   EV::loop;
 }
 

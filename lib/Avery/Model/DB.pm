@@ -102,9 +102,23 @@ sub create {
       visit    => $val,
         };
 
-    $DAT->{_user_visit_by_location}{ $val->{location} }{ $val->{visited_at} }
-        { $val->{id} }
-        = { user => $DAT->{users}{ $val->{user} }, visit => $val };
+    my $years = _years( $DAT->{users}{ $val->{user} }{birth_date} );
+
+    $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
+        { $DAT->{users}{ $val->{user} }{gender} } ||= { cnt => 0, sum => 0 };
+
+    $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
+        { $DAT->{users}{ $val->{user} }{gender} }{cnt}++;
+    $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
+        { $DAT->{users}{ $val->{user} }{gender} }{sum} += $val->{mark};
+
+    $DAT->{_user_avg}{ $val->{user} }{ $val->{location} }
+        { $val->{visited_at} } ||= { cnt => 0, sum => 0 };
+
+    $DAT->{_user_avg}{ $val->{user} }{ $val->{location} }
+        { $val->{visited_at} }{cnt}++;
+    $DAT->{_user_avg}{ $val->{user} }{ $val->{location} }
+        { $val->{visited_at} }{sum} += $val->{mark};
   }
 
   return 1;
@@ -121,8 +135,8 @@ sub update {
   my $self = shift;
   my ( $entity, $id, $val ) = @_;
 
-  my $orig = $DAT->{$entity}{$id};
-  return -1 unless $orig;
+  my $new = $DAT->{$entity}{$id};
+  return -1 unless $new;
 
   foreach my $key ( keys %$val ) {
     if ( $VALIDATION{$key} ) {
@@ -130,44 +144,80 @@ sub update {
     }
   }
 
+  my $orig = clone($new);
+
+  foreach my $key ( keys %$val ) {
+    $new->{$key} = $val->{$key};
+  }
+
+  if (
+    $entity eq 'users'
+    && ( ( $new->{gender} ne $orig->{gender} )
+      || ( $new->{birth_date} ne $orig->{birth_date} ) )
+      )
+  {
+    my $orig_years = _years( $orig->{birth_date} );
+    my $years      = _years( $new->{birth_date} );
+
+    foreach my $loc ( keys %{ $DAT->{_user_avg}{$id} } ) {
+      foreach my $at ( keys %{ $DAT->{_user_avg}{$id}{$loc} } ) {
+        my $orig_avg = $DAT->{_user_avg}{$id}{$loc}{$at};
+
+        $DAT->{_location_avg}{$loc}{$at}{$orig_years}{ $orig->{gender} }{cnt}
+            -= $orig_avg->{cnt};
+        $DAT->{_location_avg}{$loc}{$at}{$orig_years}{ $orig->{gender} }{sum}
+            -= $orig_avg->{sum};
+
+        $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }
+            ||= { cnt => 0, sum => 0 };
+
+        $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }{cnt}
+            += $orig_avg->{cnt};
+        $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }{sum}
+            += $orig_avg->{sum};
+      }
+    }
+  }
+
   if (
     $entity eq 'visits'
-    && (
-      ( $val->{user} && $val->{user} != $orig->{user} )
-      || ( $val->{visited_at}
-        && $val->{visited_at} != $orig->{visited_at} )
-    )
+    && ( ( $new->{location} ne $orig->{location} )
+      || ( $new->{visited_at} ne $orig->{visited_at} )
+      || ( $new->{user} ne $orig->{user} ) )
+      )
+  {
+    my $orig_years = _years( $DAT->{users}{ $orig->{user} }{birth_date} );
+    my $years      = _years( $DAT->{users}{ $new->{user} }{birth_date} );
+
+    $DAT->{_location_avg}{ $orig->{location} }{ $orig->{visited_at} }
+        {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }{cnt}--;
+    $DAT->{_location_avg}{ $orig->{location} }{ $orig->{visited_at} }
+        {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }{sum}
+        -= $new->{mark};
+
+    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
+        { $DAT->{users}{ $new->{user} }{gender} } ||= { cnt => 0, sum => 0 };
+
+    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
+        { $DAT->{users}{ $new->{user} }{gender} }{cnt}++;
+    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
+        { $DAT->{users}{ $new->{user} }{gender} }{sum} += $new->{mark};
+  }
+
+  if (
+    $entity eq 'visits'
+    && ( ( $new->{user} != $orig->{user} )
+      || ( $new->{visited_at} != $orig->{visited_at} ) )
       )
   {
     delete $DAT->{_location_visit_by_user}{ $orig->{user} }
         { $orig->{visited_at} }{$id};
 
-    $DAT->{_location_visit_by_user}{ $val->{user}
-          || $orig->{user} }{ $val->{visited_at}
-          || $orig->{visited_at} }{$id} = {
-      location => $DAT->{locations}{ $val->{location} || $orig->{location} },
-      visit => $orig,
-          };
-  }
-  if (
-    $entity eq 'visits'
-    && ( ( $val->{location} && $val->{location} != $orig->{location} )
-      || ( $val->{visited_at} && $val->{visited_at} != $orig->{visited_at} ) )
-      )
-  {
-    delete $DAT->{_user_visit_by_location}{ $orig->{location} }
-        { $orig->{visited_at} }{$id};
-
-    $DAT->{_user_visit_by_location}{ $val->{location}
-          || $orig->{location} }{ $val->{visited_at}
-          || $orig->{visited_at} }{$id} = {
-      user => $DAT->{users}{ $val->{user} || $orig->{user} },
-      visit => $orig,
-          };
-  }
-
-  foreach my $key ( keys %$val ) {
-    $orig->{$key} = $val->{$key};
+    $DAT->{_location_visit_by_user}{ $new->{user} }{ $new->{visited_at} }{$id}
+        = {
+      location => $DAT->{locations}{ $new->{location} },
+      visit    => $orig,
+        };
   }
 
   return 1;
@@ -265,36 +315,34 @@ sub avg {
 
   my ( $sum, $cnt ) = ( 0, 0 );
 
-  my ( $dt_from, $dt_to );
-
-  if ( $params{fromAge} ) {
-    $dt_from
-        = $TODAY->clone->subtract( years => $params{fromAge} )->epoch();
-  }
-  if ( $params{toAge} ) {
-    $dt_to = $TODAY->clone->subtract( years => $params{toAge} )->epoch();
-  }
-
   my @keys;
   if ( $params{fromDate} || $params{toDate} ) {
     $params{fromDate} //= 0;
     $params{toDate}   //= 2147483647;
     @keys = grep { $_ >= $params{fromDate} && $_ <= $params{toDate} }
-        keys %{ $DAT->{_user_visit_by_location}{$id} };
+        keys %{ $DAT->{_location_avg}{$id} };
   }
   else {
-    @keys = keys %{ $DAT->{_user_visit_by_location}{$id} };
+    @keys = keys %{ $DAT->{_location_avg}{$id} };
   }
 
-  foreach my $key (@keys) {
-    foreach my $val ( values %{ $DAT->{_user_visit_by_location}{$id}{$key} } )
-    {
-      next if $params{gender} && $params{gender} ne $val->{user}{gender};
-      next if $dt_from        && $dt_from < $val->{user}{birth_date};
-      next if $dt_to          && $dt_to >= $val->{user}{birth_date};
+  my @genders = qw( m f );
+  @genders = ( $params{gender} ) if $params{gender};
 
-      $cnt++;
-      $sum += $val->{visit}{mark};
+  foreach my $key (@keys) {
+    foreach my $age ( keys %{ $DAT->{_location_avg}{$id}{$key} } ) {
+      {
+        next
+            if $params{fromAge} && $age < $params{fromAge};
+        next
+            if $params{toAge} && $age >= $params{toAge};
+
+        foreach my $gender (@genders) {
+          next unless $DAT->{_location_avg}{$id}{$key}{$age}{$gender}{cnt};
+          $cnt += $DAT->{_location_avg}{$id}{$key}{$age}{$gender}{cnt};
+          $sum += $DAT->{_location_avg}{$id}{$key}{$age}{$gender}{sum};
+        }
+      }
     }
   }
 
@@ -303,6 +351,18 @@ sub avg {
   my $avg = sprintf( '%.5f', ( $sum / $cnt ) ) + 0;
 
   return $avg;
+}
+
+sub _years {
+  my $birth_date = shift;
+
+  return $DAT->{_years}{$birth_date} if $DAT->{_years}{$birth_date};
+
+  my $dt = DateTime->from_epoch( epoch => $birth_date, time_zone => $TZ, );
+  $DAT->{_years}{$birth_date}
+      = $TODAY->clone->subtract_datetime($dt)->years();
+
+  return $DAT->{_years}{$birth_date};
 }
 
 1;
