@@ -7,23 +7,29 @@ RUN \
     build-essential \
     ca-certificates \
     cpanminus \
+    git \
     libanyevent-httpd-perl \
+    libcanary-stability-perl \
     libclone-perl \
     libcpanel-json-xs-perl \
     libdatetime-perl \
+    libev-perl \
     libhttp-server-simple-perl \
     libipc-sharelite-perl \
+    libjson-xs-perl \
     libmemory-usage-perl \
     libsereal-perl \
     unzip \
 
   && cpanm \
+    https://github.com/Mons/AnyEvent-HTTP-Server-II.git \
     Mojolicious \
 
   && apt-get purge -y --auto-remove \
     build-essential \
     ca-certificates \
     cpanminus \
+    git \
 
   && rm -rf /var/lib/apt/lists/*
 

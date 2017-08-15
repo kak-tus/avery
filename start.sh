@@ -6,4 +6,4 @@ cd /tmp/unzip
 unzip data.zip > /dev/null
 cd /
 
-/usr/local/bin/avery_httpd.pl
+/usr/local/bin/avery_http_server2.pl
