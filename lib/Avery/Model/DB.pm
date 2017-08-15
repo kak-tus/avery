@@ -220,8 +220,8 @@ sub update {
 
   if (
     $entity eq 'visits'
-    && ( ( $new->{user} != $orig->{user} )
-      || ( $new->{visited_at} != $orig->{visited_at} ) )
+    && ( $new->{user} != $orig->{user}
+      || $new->{visited_at} != $orig->{visited_at} )
       )
   {
     delete $DAT->{_location_visit_by_user}{ $orig->{user} }
@@ -230,7 +230,7 @@ sub update {
     $DAT->{_location_visit_by_user}{ $new->{user} }{ $new->{visited_at} }{$id}
         = {
       location => $DAT->{locations}{ $new->{location} },
-      visit    => $orig,
+      visit    => $new,
         };
   }
 
@@ -282,7 +282,7 @@ sub users_visits {
   if ( $params{fromDate} || $params{toDate} ) {
     $params{fromDate} //= 0;
     $params{toDate}   //= 2147483647;
-    @keys = grep { $_ >= $params{fromDate} && $_ <= $params{toDate} }
+    @keys = grep { $_ > $params{fromDate} && $_ < $params{toDate} }
         keys %{ $DAT->{_location_visit_by_user}{$id} };
   }
   else {
@@ -333,7 +333,7 @@ sub avg {
   if ( $params{fromDate} || $params{toDate} ) {
     $params{fromDate} //= 0;
     $params{toDate}   //= 2147483647;
-    @keys = grep { $_ >= $params{fromDate} && $_ <= $params{toDate} }
+    @keys = grep { $_ > $params{fromDate} && $_ < $params{toDate} }
         keys %{ $DAT->{_location_avg}{$id} };
   }
   else {
