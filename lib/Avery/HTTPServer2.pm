@@ -66,10 +66,7 @@ sub run {
     cb   => sub {
       my $req = shift;
 
-      if ( $req->method eq 'GET' ) {
-        _form_req($req);
-      }
-      else {
+      if ( $req->method eq 'POST' && $req->headers->{'content-length'} > 0 ) {
         return HANDLE => sub {
           my $h = $_[0];
           $h->on_read(
@@ -80,6 +77,10 @@ sub run {
           );
         };
       }
+      else {
+        _form_req($req);
+      }
+
     }
   );
 
