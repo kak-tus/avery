@@ -11,9 +11,7 @@ use Data::Dumper;
 use DateTime;
 use DateTime::TimeZone;
 use Encode qw(encode_utf8);
-use IPC::ShareLite;
 use List::Util qw(any);
-use Sereal qw(sereal_encode_with_object sereal_decode_with_object);
 use Time::HiRes;
 
 my $DAT;
@@ -45,17 +43,6 @@ my %VALIDATION = (
   toAge      => { min => 0, max => 2147483647, optional => 1 },
 );
 
-my $SHARE = IPC::ShareLite->new(
-  -key     => 1,
-  -create  => 'yes',
-  -destroy => 'yes',
-) or die $!;
-
-my $STAGE = 0;
-
-my $enc = Sereal::Encoder->new();
-my $dec = Sereal::Decoder->new();
-
 sub new {
   my $parent = shift;
   my %params = @_;
@@ -84,14 +71,20 @@ sub load {
     my $entity = ( keys %$decoded )[0];
 
     foreach my $val ( @{ $decoded->{$entity} } ) {
-      my $status = $self->create( $entity, $val, without_validation => 1 );
+      if ( 0 && $entity eq 'visits' ) {
+        for ( 1 .. 100 ) {
+          $val->{id} += 100000;
+          $self->create( $entity, $val, without_validation => 1 );
+        }
+      }
+      else {
+        $self->create( $entity, $val, without_validation => 1 );
+      }
     }
   }
 
   my $end = Time::HiRes::time;
   $self->{logger}->info( "Loaded $end, diff " . ( $end - $start ) );
-
-  $STAGE = 0;
 
   return;
 }
@@ -100,8 +93,6 @@ sub create {
   my $self = shift;
   my ( $entity, $val ) = ( shift, shift );
   my %params = @_;
-
-  $STAGE = 2;
 
   if ( !$params{without_validation} ) {
     foreach my $key ( keys %$val ) {
@@ -113,11 +104,14 @@ sub create {
   $DAT->{$entity}{ $val->{id} } = $val;
 
   if ( $entity eq 'visits' ) {
-    $DAT->{_location_visit_by_user}{ $val->{user} }{ $val->{id} } = {
+    $DAT->{_location_visit_by_user}{ $val->{user} }{ $val->{visited_at} }
+        { $val->{id} } = {
       location => $DAT->{locations}{ $val->{location} },
       visit    => $val,
-    };
-    $DAT->{_user_visit_by_location}{ $val->{location} }{ $val->{id} }
+        };
+
+    $DAT->{_user_visit_by_location}{ $val->{location} }{ $val->{visited_at} }
+        { $val->{id} }
         = { user => $DAT->{users}{ $val->{user} }, visit => $val };
   }
 
@@ -128,16 +122,12 @@ sub read {
   my $self = shift;
   my ( $entity, $id ) = @_;
 
-  $self->_fork();
-
   return $DAT->{$entity}{$id};
 }
 
 sub update {
   my $self = shift;
   my ( $entity, $id, $val ) = @_;
-
-  $STAGE = 2;
 
   my $orig = $DAT->{$entity}{$id};
   return -1 unless $orig;
@@ -148,25 +138,40 @@ sub update {
     }
   }
 
-  if ( $entity eq 'visits'
-    && $val->{user}
-    && $val->{user} != $orig->{user} )
+  if (
+    $entity eq 'visits'
+    && (
+      ( $val->{user} && $val->{user} != $orig->{user} )
+      || ( $val->{visited_at}
+        && $val->{visited_at} != $orig->{visited_at} )
+    )
+      )
   {
-    delete $DAT->{_location_visit_by_user}{ $orig->{user} }{$id};
-    $DAT->{_location_visit_by_user}{ $val->{user} }{$id} = {
+    delete $DAT->{_location_visit_by_user}{ $orig->{user} }
+        { $orig->{visited_at} }{$id};
+
+    $DAT->{_location_visit_by_user}{ $val->{user}
+          || $orig->{user} }{ $val->{visited_at}
+          || $orig->{visited_at} }{$id} = {
       location => $DAT->{locations}{ $val->{location} || $orig->{location} },
       visit => $orig,
-    };
+          };
   }
-  if ( $entity eq 'visits'
-    && $val->{location}
-    && $val->{location} != $orig->{location} )
+  if (
+    $entity eq 'visits'
+    && ( ( $val->{location} && $val->{location} != $orig->{location} )
+      || ( $val->{visited_at} && $val->{visited_at} != $orig->{visited_at} ) )
+      )
   {
-    delete $DAT->{_user_visit_by_location}{ $orig->{location} }{$id};
-    $DAT->{_user_visit_by_location}{ $val->{location} }{$id} = {
+    delete $DAT->{_user_visit_by_location}{ $orig->{location} }
+        { $orig->{visited_at} }{$id};
+
+    $DAT->{_user_visit_by_location}{ $val->{location}
+          || $orig->{location} }{ $val->{visited_at}
+          || $orig->{visited_at} }{$id} = {
       user => $DAT->{users}{ $val->{user} || $orig->{user} },
       visit => $orig,
-    };
+          };
   }
 
   foreach my $key ( keys %$val ) {
@@ -215,34 +220,42 @@ sub users_visits {
     return -2 if _validate( 'users_visits', $key, $params{$key} ) == -2;
   }
 
-  $self->_fork();
-
   return -1 unless $DAT->{users}{$id};
+
+  my @keys;
+  if ( $params{fromDate} || $params{toDate} ) {
+    $params{fromDate} //= 0;
+    $params{toDate}   //= 2147483647;
+    @keys = grep { $_ >= $params{fromDate} && $_ <= $params{toDate} }
+        keys %{ $DAT->{_location_visit_by_user}{$id} };
+  }
+  else {
+    @keys = keys %{ $DAT->{_location_visit_by_user}{$id} };
+  }
 
   my @res;
 
-  foreach my $val ( values %{ $DAT->{_location_visit_by_user}{$id} } ) {
-    next
-        if $params{fromDate}
-        && $val->{visit}{visited_at} < $params{fromDate};
-    next if $params{toDate} && $val->{visit}{visited_at} > $params{toDate};
+  foreach my $key (@keys) {
+    foreach my $val ( values %{ $DAT->{_location_visit_by_user}{$id}{$key} } )
+    {
+      next
+          if defined $params{country}
+          && $val->{location}{country} ne $params{country};
+      next
+          if defined $params{toDistance}
+          && $val->{location}{distance} >= $params{toDistance};
 
-    next
-        if defined $params{country}
-        && $val->{location}{country} ne $params{country};
-    next
-        if defined $params{toDistance}
-        && $val->{location}{distance} >= $params{toDistance};
-
-    my %visit = (
-      mark       => $val->{visit}{mark},
-      visited_at => $val->{visit}{visited_at},
-      place      => $val->{location}{place},
-    );
-    push @res, \%visit;
+      my %visit = (
+        mark       => $val->{visit}{mark},
+        visited_at => $val->{visit}{visited_at},
+        place      => $val->{location}{place},
+      );
+      push @res, \%visit;
+    }
   }
 
   my @sorted = sort { $a->{visited_at} <=> $b->{visited_at} } @res;
+
   return \@sorted;
 }
 
@@ -255,8 +268,6 @@ sub avg {
     next unless $VALIDATION{$key};
     return -2 if _validate( 'avg', $key, $params{$key} ) == -2;
   }
-
-  $self->_fork();
 
   return -1 unless $DAT->{locations}{$id};
 
@@ -272,55 +283,34 @@ sub avg {
     $dt_to = $TODAY->clone->subtract( years => $params{toAge} )->epoch();
   }
 
-  foreach my $val ( values %{ $DAT->{_user_visit_by_location}{$id} } ) {
-    next
-        if $params{fromDate}
-        && $val->{visit}{visited_at} < $params{fromDate};
-    next if $params{toDate} && $val->{visit}{visited_at} > $params{toDate};
+  my @keys;
+  if ( $params{fromDate} || $params{toDate} ) {
+    $params{fromDate} //= 0;
+    $params{toDate}   //= 2147483647;
+    @keys = grep { $_ >= $params{fromDate} && $_ <= $params{toDate} }
+        keys %{ $DAT->{_user_visit_by_location}{$id} };
+  }
+  else {
+    @keys = keys %{ $DAT->{_user_visit_by_location}{$id} };
+  }
 
-    next if $params{gender} && $val->{user}{gender} ne $params{gender};
+  foreach my $key (@keys) {
+    foreach my $val ( values %{ $DAT->{_user_visit_by_location}{$id}{$key} } )
+    {
+      next if $params{gender} && $params{gender} ne $val->{user}{gender};
+      next if $dt_from        && $dt_from < $val->{user}{birth_date};
+      next if $dt_to          && $dt_to >= $val->{user}{birth_date};
 
-    next if $dt_from && $dt_from < $val->{user}{birth_date};
-    next if $dt_to   && $dt_to >= $val->{user}{birth_date};
-
-    $cnt++;
-    $sum += $val->{visit}{mark};
+      $cnt++;
+      $sum += $val->{visit}{mark};
+    }
   }
 
   return 0 unless $cnt;
 
   my $avg = sprintf( '%.5f', ( $sum / $cnt ) ) + 0;
+
   return $avg;
-}
-
-sub _fork {
-  my $self = shift;
-
-  return unless $self->{parent_pid};
-
-  if ( $STAGE == 0 ) {
-    $self->{logger}->info('Just forked');
-    my $val = $SHARE->fetch;
-    $STAGE = 1;
-    return unless $val;
-
-    undef $DAT;
-    $DAT = sereal_decode_with_object( $dec, $val );
-    $self->{logger}->info('Got from shared mem');
-    $STAGE = 3;
-  }
-  elsif ( $STAGE == 2 ) {
-    $STAGE = 3;
-    $self->{logger}->info('Stage 3');
-
-    $SHARE->store( sereal_encode_with_object( $enc, $DAT ) );
-    $self->{logger}->info('Stored');
-
-    kill 'TTIN', $self->{parent_pid};
-    Time::HiRes::usleep(1);
-  }
-
-  return;
 }
 
 1;

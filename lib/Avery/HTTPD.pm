@@ -19,7 +19,7 @@ use Memory::Usage;
 use Mojo::Log;
 use Time::HiRes qw( gettimeofday tv_interval usleep );
 
-my $httpd = AnyEvent::HTTPD->new( port => 80, backlog => 100000 );
+my $httpd = AnyEvent::HTTPD->new( port => 80, backlog => 1000000 );
 
 my %entities = ( users => 1, visits => 1, locations => 1 );
 
@@ -45,11 +45,19 @@ my %SHARES = (
     -key     => 2,
     -create  => 'yes',
     -destroy => 'yes',
-  )
+  ),
+  3 => IPC::ShareLite->new(
+    -key     => 3,
+    -create  => 'yes',
+    -destroy => 'yes',
+  ),
 );
 
 my $mu = Memory::Usage->new();
 $mu->record('starting work');
+
+my %STAT;
+my %CACHE;
 
 sub run {
   $httpd->reg_cb(
@@ -226,6 +234,25 @@ sub _process {
 sub _to_worker {
   my $q = shift;
 
+  my $key
+      = $q->{data}{path} . '_'
+      . join( '_',
+    map { $_ . '_' . $q->{data}{vars}{$_} } sort keys %{ $q->{data}{vars} } );
+
+  $STAT{$key} //= 0;
+  $STAT{$key}++;
+
+  if ( $CACHE{$key} ) {
+    $q->{resp}->(
+      [ $CACHE{$key}->{code},
+        'OK',
+        { 'Content-Type' => 'application/json;charset=UTF-8' },
+        $CACHE{$key}->{data}
+      ]
+    );
+    return;
+  }
+
   my $min = min map { $_->{count} } values %FORKS;
 
   foreach my $fork ( keys %FORKS ) {
@@ -240,7 +267,8 @@ sub _to_worker {
     my $enc  = $JSON->encode( $q->{data} );
     print $pipe "$enc\n";
 
-    push @{ $FORKS{$fork}->{qu} }, $q->{resp};
+    $q->{key} = $key;
+    push @{ $FORKS{$fork}->{qu} }, $q;
 
     last;
   }
@@ -252,17 +280,7 @@ sub _200 {
   my ( $q, $data ) = @_;
 
   unless ( $q->{resp} ) {
-    $SHARE->lock(IPC::ShareLite::LOCK_EX);
-    my $val = $SHARE->fetch;
-    if ($val) {
-      $val = $JSON->decode($val);
-    }
-    else {
-      $val = [];
-    }
-    push @$val, { code => 200, data => $data };
-    $SHARE->store( $JSON->encode($val) );
-    $SHARE->unlock();
+    _store( 200, $data );
     return;
   }
 
@@ -279,17 +297,7 @@ sub _404 {
   my $q = shift;
 
   unless ( $q->{resp} ) {
-    $SHARE->lock(IPC::ShareLite::LOCK_EX);
-    my $val = $SHARE->fetch;
-    if ($val) {
-      $val = $JSON->decode($val);
-    }
-    else {
-      $val = [];
-    }
-    push @$val, { code => 404 };
-    $SHARE->store( $JSON->encode($val) );
-    $SHARE->unlock();
+    _store( 404, '{}' );
     return;
   }
 
@@ -305,17 +313,7 @@ sub _400 {
   my $q = shift;
 
   unless ( $q->{resp} ) {
-    $SHARE->lock(IPC::ShareLite::LOCK_EX);
-    my $val = $SHARE->fetch;
-    if ($val) {
-      $val = $JSON->decode($val);
-    }
-    else {
-      $val = [];
-    }
-    push @$val, { code => 400 };
-    $SHARE->store( $JSON->encode($val) );
-    $SHARE->unlock();
+    _store( 400, '{}' );
     return;
   }
 
@@ -327,8 +325,28 @@ sub _400 {
   return;
 }
 
+sub _store {
+  my ( $code, $data ) = @_;
+
+  $SHARE->lock(IPC::ShareLite::LOCK_EX);
+  my $val = $SHARE->fetch;
+
+  if ($val) {
+    $val .= "\n";
+  }
+  else {
+    $val = '';
+  }
+
+  $val .= "$code\n$data";
+  $SHARE->store($val);
+  $SHARE->unlock();
+
+  return;
+}
+
 sub _fork {
-  for my $i ( 1 .. 2 ) {
+  for my $i ( 1 .. 3 ) {
     my $pipe = IO::Pipe->new();
     my $pid;
 
@@ -362,29 +380,32 @@ sub _fork {
 }
 
 sub _check {
-  my $i = shift;
+  my $fork = shift;
 
-  my $val = $SHARES{$i}->fetch;
+  my $val = $SHARES{$fork}->fetch;
   return unless $val;
 
-  $SHARES{$i}->lock(IPC::ShareLite::LOCK_EX);
-  $val = $SHARES{$i}->fetch;
-  $SHARES{$i}->store('[]');
-  $SHARES{$i}->unlock();
+  $SHARES{$fork}->lock(IPC::ShareLite::LOCK_EX);
+  $val = $SHARES{$fork}->fetch;
+  $SHARES{$fork}->store('');
+  $SHARES{$fork}->unlock();
 
-  my $dec = $JSON->decode($val);
-  return unless $dec && scalar @$dec;
+  my @dec = split "\n", $val;
+  return unless scalar @dec;
 
-  foreach my $item (@$dec) {
-    $item->{data} //= '{}';
+  for ( my $i = 0; $i < scalar(@dec) - 1; $i += 2 ) {
+    my $q = shift @{ $FORKS{$fork}->{qu} };
 
-    my $resp = shift @{ $FORKS{$i}->{qu} };
-    $resp->(
-      [ $item->{code}, 'OK',
+    $q->{resp}->(
+      [ $dec[$i], 'OK',
         { 'Content-Type' => 'application/json;charset=UTF-8' },
-        $item->{data}
+        $dec[ $i + 1 ]
       ]
     );
+
+    if ( $STAT{ $q->{key} } > 1 ) {
+      $CACHE{ $q->{key} } = { code => $dec[$i], data => $dec[ $i + 1 ] };
+    }
   }
 
   return;
