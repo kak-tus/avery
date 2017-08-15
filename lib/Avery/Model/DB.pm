@@ -14,7 +14,7 @@ use Encode qw(encode_utf8);
 use List::Util qw(any);
 use Time::HiRes;
 
-my $DAT;
+our $DAT;
 
 my $JSON = Cpanel::JSON::XS->new->utf8;
 
@@ -71,15 +71,7 @@ sub load {
     my $entity = ( keys %$decoded )[0];
 
     foreach my $val ( @{ $decoded->{$entity} } ) {
-      if ( 0 && $entity eq 'visits' ) {
-        for ( 1 .. 100 ) {
-          $val->{id} += 100000;
-          $self->create( $entity, $val, without_validation => 1 );
-        }
-      }
-      else {
-        $self->create( $entity, $val, without_validation => 1 );
-      }
+      $self->create( $entity, $val, without_validation => 1 );
     }
   }
 

@@ -19,7 +19,11 @@ use Memory::Usage;
 use Mojo::Log;
 use Time::HiRes qw( gettimeofday tv_interval usleep );
 
-my $httpd = AnyEvent::HTTPD->new( port => 80, backlog => 1000000 );
+my $httpd = AnyEvent::HTTPD->new(
+  port            => 80,
+  backlog         => 1000000,
+  request_timeout => 120,
+);
 
 my %entities = ( users => 1, visits => 1, locations => 1 );
 
@@ -354,7 +358,7 @@ sub _fork {
       $pipe->writer();
       $pipe->autoflush(1);
 
-      my $timer = AE::timer 0.1, 0.1, sub {
+      my $timer = AE::timer 0.01, 0.01, sub {
         _check($i);
       };
 
@@ -375,6 +379,8 @@ sub _fork {
       return;
     }
   }
+
+  $Avery::Model::DB::DAT = undef;
 
   return 1;
 }
