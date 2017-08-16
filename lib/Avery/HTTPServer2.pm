@@ -107,6 +107,12 @@ sub _form_req {
 sub handle_request {
   my $q = shift;
 
+  if ( $q->{data}{method} ne 'POST' && $STAGE == 2 ) {
+    $STAGE = 3;
+    undef %CACHE;
+    undef %STAT;
+  }
+
   _process($q);
   return;
 
