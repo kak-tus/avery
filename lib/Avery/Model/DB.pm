@@ -105,20 +105,20 @@ sub create {
     my $years = _years( $DAT->{users}{ $val->{user} }{birth_date} );
 
     $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
-        { $DAT->{users}{ $val->{user} }{gender} } ||= { cnt => 0, sum => 0 };
+        { $DAT->{users}{ $val->{user} }{gender} } ||= [ 0, 0 ];
 
     $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
-        { $DAT->{users}{ $val->{user} }{gender} }{cnt}++;
+        { $DAT->{users}{ $val->{user} }{gender} }[0]++;
     $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
-        { $DAT->{users}{ $val->{user} }{gender} }{sum} += $val->{mark};
+        { $DAT->{users}{ $val->{user} }{gender} }[1] += $val->{mark};
 
     $DAT->{_user_avg}{ $val->{user} }{ $val->{location} }
-        { $val->{visited_at} } ||= { cnt => 0, sum => 0 };
+        { $val->{visited_at} } ||= [ 0, 0 ];
 
     $DAT->{_user_avg}{ $val->{user} }{ $val->{location} }
-        { $val->{visited_at} }{cnt}++;
+        { $val->{visited_at} }[0]++;
     $DAT->{_user_avg}{ $val->{user} }{ $val->{location} }
-        { $val->{visited_at} }{sum} += $val->{mark};
+        { $val->{visited_at} }[1] += $val->{mark};
   }
 
   return 1;
@@ -163,18 +163,18 @@ sub update {
       foreach my $at ( keys %{ $DAT->{_user_avg}{$id}{$loc} } ) {
         my $orig_avg = $DAT->{_user_avg}{$id}{$loc}{$at};
 
-        $DAT->{_location_avg}{$loc}{$at}{$orig_years}{ $orig->{gender} }{cnt}
-            -= $orig_avg->{cnt};
-        $DAT->{_location_avg}{$loc}{$at}{$orig_years}{ $orig->{gender} }{sum}
-            -= $orig_avg->{sum};
+        $DAT->{_location_avg}{$loc}{$at}{$orig_years}{ $orig->{gender} }[0]
+            -= $orig_avg->[0];
+        $DAT->{_location_avg}{$loc}{$at}{$orig_years}{ $orig->{gender} }[1]
+            -= $orig_avg->[1];
 
         $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }
-            ||= { cnt => 0, sum => 0 };
+            ||= [ 0, 0 ];
 
-        $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }{cnt}
-            += $orig_avg->{cnt};
-        $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }{sum}
-            += $orig_avg->{sum};
+        $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }[0]
+            += $orig_avg->[0];
+        $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }[1]
+            += $orig_avg->[1];
       }
     }
   }
@@ -191,31 +191,31 @@ sub update {
     my $years      = _years( $DAT->{users}{ $new->{user} }{birth_date} );
 
     $DAT->{_location_avg}{ $orig->{location} }{ $orig->{visited_at} }
-        {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }{cnt}--;
+        {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }[0]--;
     $DAT->{_location_avg}{ $orig->{location} }{ $orig->{visited_at} }
-        {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }{sum}
+        {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }[1]
         -= $orig->{mark};
 
     $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
-        { $DAT->{users}{ $new->{user} }{gender} } ||= { cnt => 0, sum => 0 };
+        { $DAT->{users}{ $new->{user} }{gender} } ||= [ 0, 0 ];
 
     $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
-        { $DAT->{users}{ $new->{user} }{gender} }{cnt}++;
+        { $DAT->{users}{ $new->{user} }{gender} }[0]++;
     $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
-        { $DAT->{users}{ $new->{user} }{gender} }{sum} += $new->{mark};
+        { $DAT->{users}{ $new->{user} }{gender} }[1] += $new->{mark};
 
     $DAT->{_user_avg}{ $orig->{user} }{ $orig->{location} }
-        { $orig->{visited_at} }{cnt}--;
+        { $orig->{visited_at} }[0]--;
     $DAT->{_user_avg}{ $orig->{user} }{ $orig->{location} }
-        { $orig->{visited_at} }{sum} -= $orig->{mark};
+        { $orig->{visited_at} }[1] -= $orig->{mark};
 
     $DAT->{_user_avg}{ $new->{user} }{ $new->{location} }
-        { $new->{visited_at} } ||= { cnt => 0, sum => 0 };
+        { $new->{visited_at} } ||= [ 0, 0 ];
 
     $DAT->{_user_avg}{ $new->{user} }{ $new->{location} }
-        { $new->{visited_at} }{cnt}++;
+        { $new->{visited_at} }[0]++;
     $DAT->{_user_avg}{ $new->{user} }{ $new->{location} }
-        { $new->{visited_at} }{sum} += $new->{mark};
+        { $new->{visited_at} }[1] += $new->{mark};
   }
 
   if (
@@ -352,9 +352,9 @@ sub avg {
             if $params{toAge} && $age >= $params{toAge};
 
         foreach my $gender (@genders) {
-          next unless $DAT->{_location_avg}{$id}{$key}{$age}{$gender}{cnt};
-          $cnt += $DAT->{_location_avg}{$id}{$key}{$age}{$gender}{cnt};
-          $sum += $DAT->{_location_avg}{$id}{$key}{$age}{$gender}{sum};
+          next unless $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[0];
+          $cnt += $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[0];
+          $sum += $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[1];
         }
       }
     }

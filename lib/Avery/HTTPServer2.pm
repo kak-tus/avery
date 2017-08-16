@@ -381,6 +381,9 @@ sub _fork {
 
       return;
     }
+    else {
+      $logger->info('Fork fail');
+    }
   }
 
   $Avery::Model::DB::DAT = undef;
