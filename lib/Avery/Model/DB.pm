@@ -221,7 +221,8 @@ sub update {
   if (
     $entity eq 'visits'
     && ( $new->{user} != $orig->{user}
-      || $new->{visited_at} != $orig->{visited_at} )
+      || $new->{visited_at} != $orig->{visited_at}
+      || $new->{location} != $orig->{location} )
       )
   {
     delete $DAT->{_location_visit_by_user}{ $orig->{user} }
