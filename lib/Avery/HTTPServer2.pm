@@ -6,6 +6,7 @@ use v5.10;
 use utf8;
 
 use AnyEvent;
+use AnyEvent::Handle;
 use AnyEvent::HTTP::Server;
 use Avery::Model::DB;
 use Cpanel::JSON::XS;
@@ -13,7 +14,6 @@ use Data::Dumper;
 use Encode qw(decode_utf8);
 use EV;
 use IO::Pipe;
-use IPC::ShareLite;
 use List::Util qw(min);
 use Memory::Usage;
 use Mojo::Log;
@@ -34,30 +34,13 @@ my $STAGE = 1;
 
 my %FORKS;
 
-my $SHARE;
-my %SHARES = (
-  1 => IPC::ShareLite->new(
-    -key     => 1,
-    -create  => 'yes',
-    -destroy => 'yes',
-  ),
-  2 => IPC::ShareLite->new(
-    -key     => 2,
-    -create  => 'yes',
-    -destroy => 'yes',
-  ),
-  3 => IPC::ShareLite->new(
-    -key     => 3,
-    -create  => 'yes',
-    -destroy => 'yes',
-  ),
-);
-
 my $mu = Memory::Usage->new();
 $mu->record('starting work');
 
 my %STAT;
 my %CACHE;
+
+my $PIPE_RESP;
 
 sub run {
   $httpd = AnyEvent::HTTP::Server->new(
@@ -287,10 +270,6 @@ sub _to_worker {
     return;
   }
 
-  foreach my $fork ( keys %FORKS ) {
-    _check($fork);
-  }
-
   my $min = min map { $_->{count} } values %FORKS;
 
   foreach my $fork ( keys %FORKS ) {
@@ -352,44 +331,47 @@ sub _400 {
 sub _store {
   my ( $code, $data ) = @_;
 
-  $SHARE->lock(IPC::ShareLite::LOCK_EX);
-  my $val = $SHARE->fetch;
-
-  if ($val) {
-    $val .= "\n";
-  }
-  else {
-    $val = '';
-  }
-
-  $val .= "$code\n$data";
-  $SHARE->store($val);
-  $SHARE->unlock();
+  print $PIPE_RESP "$code\n$data\n";
 
   return;
 }
 
 sub _fork {
   for my $i ( 1 .. 3 ) {
-    my $pipe = IO::Pipe->new();
+    my $pipe      = IO::Pipe->new();
+    my $pipe_resp = IO::Pipe->new();
     my $pid;
 
     if ( $pid = fork() ) {
       $pipe->writer();
       $pipe->autoflush(1);
+      $pipe_resp->reader();
 
-      my $timer = AE::timer 0.01, 0.01, sub {
-        _check($i);
+      my $hdl;
+      $hdl = AnyEvent::Handle->new(
+        fh      => $pipe_resp,
+        on_read => sub {
+          my $h = shift;
+          _resp( $i, $h->{rbuf} );
+        }
+      );
+
+      $FORKS{$i} = {
+        count     => 0,
+        pipe      => $pipe,
+        pipe_resp => $pipe_resp,
+        hdl       => $hdl,
       };
-
-      $FORKS{$i} = { count => 0, pipe => $pipe, timer => $timer };
 
       usleep 1;
     }
     elsif ( defined $pid ) {
       $logger->info("Forked $$");
       $pipe->reader();
-      $SHARE = $SHARES{$i};
+
+      $pipe_resp->writer();
+      $pipe_resp->autoflush(1);
+      $PIPE_RESP = $pipe_resp;
 
       while (<$pipe>) {
         my $q = { data => $JSON->decode($_) };
@@ -405,16 +387,8 @@ sub _fork {
   return 1;
 }
 
-sub _check {
-  my $fork = shift;
-
-  my $val = $SHARES{$fork}->fetch;
-  return unless $val;
-
-  $SHARES{$fork}->lock(IPC::ShareLite::LOCK_EX);
-  $val = $SHARES{$fork}->fetch;
-  $SHARES{$fork}->store('');
-  $SHARES{$fork}->unlock();
+sub _resp {
+  my ( $fork, $val ) = @_;
 
   my @dec = split "\n", $val;
   return unless scalar @dec;
