@@ -317,16 +317,7 @@ sub _to_worker {
 sub _200 {
   my ( $q, $data ) = @_;
 
-  unless ( $q->{resp} ) {
-    _store( 200, $data );
-    return;
-  }
-
-  if ( $STAT{ $q->{key} } > 3 ) {
-    $CACHE{ $q->{key} } = { code => 200, data => $data };
-  }
-
-  $q->{resp}->( 200, $data );
+  _store( $q, 200, $data );
 
   return;
 }
@@ -334,16 +325,7 @@ sub _200 {
 sub _404 {
   my $q = shift;
 
-  unless ( $q->{resp} ) {
-    _store( 404, '{}' );
-    return;
-  }
-
-  if ( $STAT{ $q->{key} } > 3 ) {
-    $CACHE{ $q->{key} } = { code => 404, data => '{}' };
-  }
-
-  $q->{resp}->( 404, '{}' );
+  _store( $q, 404, '{}' );
 
   return;
 }
@@ -351,24 +333,24 @@ sub _404 {
 sub _400 {
   my $q = shift;
 
-  unless ( $q->{resp} ) {
-    _store( 400, '{}' );
-    return;
-  }
-
-  if ( $STAT{ $q->{key} } > 3 ) {
-    $CACHE{ $q->{key} } = { code => 400, data => '{}' };
-  }
-
-  $q->{resp}->( 400, '{}' );
+  _store( $q, 400, '{}' );
 
   return;
 }
 
 sub _store {
-  my ( $code, $data ) = @_;
+  my ( $q, $code, $data ) = @_;
 
-  print $PIPE_RESP "$code\n$data\n";
+  unless ( $q->{resp} ) {
+    print $PIPE_RESP "$code\n$data\n";
+    return;
+  }
+
+  if ( $STAT{ $q->{key} } > 3 ) {
+    $CACHE{ $q->{key} } = { code => $code, data => $data };
+  }
+
+  $q->{resp}->( $code, $data );
 
   return;
 }
