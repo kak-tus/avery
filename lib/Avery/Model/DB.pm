@@ -283,11 +283,11 @@ sub users_visits {
   if ( $params{fromDate} || $params{toDate} ) {
     $params{fromDate} //= 0;
     $params{toDate}   //= 2147483647;
-    @keys = grep { $_ > $params{fromDate} && $_ < $params{toDate} }
+    @keys = sort grep { $_ > $params{fromDate} && $_ < $params{toDate} }
         keys %{ $DAT->{_location_visit_by_user}{$id} };
   }
   else {
-    @keys = keys %{ $DAT->{_location_visit_by_user}{$id} };
+    @keys = sort keys %{ $DAT->{_location_visit_by_user}{$id} };
   }
 
   my @res;
@@ -311,9 +311,7 @@ sub users_visits {
     }
   }
 
-  my @sorted = sort { $a->{visited_at} <=> $b->{visited_at} } @res;
-
-  return \@sorted;
+  return \@res;
 }
 
 sub avg {
