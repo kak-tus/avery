@@ -287,11 +287,11 @@ sub _to_worker {
     return;
   }
 
-  my $min = min map { $_->{count} } values %FORKS;
-
   foreach my $fork ( keys %FORKS ) {
     _check($fork);
   }
+
+  my $min = min map { $_->{count} } values %FORKS;
 
   foreach my $fork ( keys %FORKS ) {
     next if $FORKS{$fork}->{count} > $min;
@@ -370,7 +370,7 @@ sub _store {
 }
 
 sub _fork {
-  for my $i ( 1 .. 2 ) {
+  for my $i ( 1 .. 3 ) {
     my $pipe = IO::Pipe->new();
     my $pid;
 
@@ -420,6 +420,7 @@ sub _check {
   return unless scalar @dec;
 
   for ( my $i = 0; $i < scalar(@dec) - 1; $i += 2 ) {
+    $FORKS{$fork}->{count}--;
     my $q = shift @{ $FORKS{$fork}->{qu} };
 
     $q->{resp}->( $dec[$i], $dec[ $i + 1 ] );
