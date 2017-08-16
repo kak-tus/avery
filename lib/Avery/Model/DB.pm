@@ -41,6 +41,7 @@ my %VALIDATION = (
   toDistance => { min => 0, max => 2147483647, optional => 1 },
   fromAge    => { min => 0, max => 2147483647, optional => 1 },
   toAge      => { min => 0, max => 2147483647, optional => 1 },
+  place      => { len => 2147483647 },
 );
 
 sub new {
