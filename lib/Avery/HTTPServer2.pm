@@ -107,6 +107,9 @@ sub _form_req {
 sub handle_request {
   my $q = shift;
 
+  _process($q);
+  return;
+
   if ( $q->{data}{method} ne 'POST' && $STAGE == 2 ) {
     $logger->info( $mu->report );
     $STAGE = 3;
@@ -127,6 +130,22 @@ sub handle_request {
 
 sub _process {
   my $q = shift;
+
+  my $key
+      = $q->{data}{path} . '_'
+      . join( '_',
+    map { $_ . '_' . $q->{data}{vars}{$_} }
+    sort keys %{ $q->{data}{vars} } );
+
+  $STAT{$key} //= 0;
+  $STAT{$key}++;
+
+  if ( $CACHE{$key} ) {
+    $q->{resp}->( $CACHE{$key}->{code}, $CACHE{$key}->{data} );
+    return;
+  }
+
+  $q->{key} = $key;
 
   my @path = split '/', $q->{data}{path};
 
@@ -297,6 +316,10 @@ sub _200 {
     return;
   }
 
+  if ( $STAT{ $q->{key} } > 3 ) {
+    $CACHE{ $q->{key} } = { code => 200, data => $data };
+  }
+
   $q->{resp}->( 200, $data );
 
   return;
@@ -310,6 +333,10 @@ sub _404 {
     return;
   }
 
+  if ( $STAT{ $q->{key} } > 3 ) {
+    $CACHE{ $q->{key} } = { code => 404, data => '{}' };
+  }
+
   $q->{resp}->( 404, '{}' );
 
   return;
@@ -321,6 +348,10 @@ sub _400 {
   unless ( $q->{resp} ) {
     _store( 400, '{}' );
     return;
+  }
+
+  if ( $STAT{ $q->{key} } > 3 ) {
+    $CACHE{ $q->{key} } = { code => 400, data => '{}' };
   }
 
   $q->{resp}->( 400, '{}' );
