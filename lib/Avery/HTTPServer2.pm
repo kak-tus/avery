@@ -353,6 +353,7 @@ sub _fork {
         on_read => sub {
           my $h = shift;
           _resp( $i, $h->{rbuf} );
+          $h->{rbuf} = '';
         }
       );
 
