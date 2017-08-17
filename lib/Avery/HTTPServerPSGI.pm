@@ -229,7 +229,7 @@ sub _process {
       return _400($q);
     }
     else {
-      return _200( $q, $JSON->encode( { avg => $avg } ) );
+      return _200( $q, qq[{"avg":$avg}] );
     }
   }
   else {
