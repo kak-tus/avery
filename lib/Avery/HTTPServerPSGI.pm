@@ -54,10 +54,13 @@ sub app {
 sub _form_req {
   my $req = shift;
 
-  my %vars = map { split '=', $_ } split( '&', $req->{QUERY_STRING} );
+  my %vars;
+  if ( $req->{QUERY_STRING} ) {
+    %vars = map { split '=', $_ } split( '&', $req->{QUERY_STRING} );
 
-  $vars{country} = decode_utf8( uri_unescape( $vars{country} ) )
-      if $vars{country};
+    $vars{country} = decode_utf8( uri_unescape( $vars{country} ) )
+        if $vars{country};
+  }
 
   my $content;
   if ( $req->{CONTENT_LENGTH} ) {
