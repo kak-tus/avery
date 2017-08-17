@@ -66,11 +66,8 @@ sub run {
       else {
         _form_req($req);
       }
-
     }
   );
-
-  $httpd->{backlog} = 5000;
 
   $httpd->listen;
   $httpd->accept;
@@ -95,7 +92,8 @@ sub _form_req {
     resp => sub {
       my ( $status, $data ) = @_;
       $req->reply( $status, $data,
-        { 'Content-Type' => 'application/json;charset=UTF-8' } );
+        headers =>
+            { 'content-type' => 'application/json', connection => 'close' } );
     },
   };
 
@@ -137,23 +135,26 @@ sub handle_request {
 sub _process {
   my $q = shift;
 
-  my $key
-      = $q->{data}{path} . '_'
-      . join( '_',
-    map { $_ . '_' . $q->{data}{vars}{$_} }
-    sort keys %{ $q->{data}{vars} } );
-
-  $STAT{$key} //= 0;
-  $STAT{$key}++;
-
-  if ( $CACHE{$key} ) {
-    $q->{resp}->( $CACHE{$key}->{code}, $CACHE{$key}->{data} );
-    return;
-  }
-
-  $q->{key} = $key;
-
   my @path = split '/', $q->{data}{path};
+
+  ## кэш только для долгих запросов
+  if ( $q->{data}{method} eq 'GET' && scalar(@path) == 4 ) {
+    my $key
+        = $q->{data}{path} . '_'
+        . join( '_',
+      map { $_ . '_' . $q->{data}{vars}{$_} }
+      sort keys %{ $q->{data}{vars} } );
+
+    $STAT{$key} //= 0;
+    $STAT{$key}++;
+
+    if ( $CACHE{$key} ) {
+      $q->{resp}->( $CACHE{$key}->{code}, $CACHE{$key}->{data} );
+      return;
+    }
+
+    $q->{key} = $key;
+  }
 
   if ( scalar(@path) == 3
     && $entities{ $path[1] }
@@ -346,7 +347,7 @@ sub _store {
     return;
   }
 
-  if ( $STAT{ $q->{key} } > 3 ) {
+  if ( $q->{key} && $STAT{ $q->{key} } > 10 ) {
     $CACHE{ $q->{key} } = { code => $code, data => $data };
   }
 
@@ -422,7 +423,7 @@ sub _resp {
 
     $q->{resp}->( $dec[$i], $dec[ $i + 1 ] );
 
-    if ( $STAT{ $q->{key} } > 3 ) {
+    if ( $q->{key} && $STAT{ $q->{key} } > 10 ) {
       $CACHE{ $q->{key} } = { code => $dec[$i], data => $dec[ $i + 1 ] };
     }
   }
