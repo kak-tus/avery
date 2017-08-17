@@ -263,7 +263,7 @@ sub _400 {
 sub _store {
   my ( $q, $code, $data ) = @_;
 
-  if ( $q->{key} && $STAT{ $q->{key} } > 10 ) {
+  if ( $q->{key} && $STAT{ $q->{key} } > 1 ) {
     $CACHE{ $q->{key} } = { code => $code, data => $data };
   }
 
