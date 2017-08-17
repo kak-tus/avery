@@ -20,6 +20,7 @@ RUN \
     libmemory-usage-perl \
     libplack-perl \
     libsereal-perl \
+    liburi-escape-xs-perl \
     procps \
     unzip \
     uwsgi \

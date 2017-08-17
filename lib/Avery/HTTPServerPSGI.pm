@@ -17,6 +17,7 @@ use List::Util qw(min);
 use Memory::Usage;
 use Mojo::Log;
 use Time::HiRes qw( gettimeofday tv_interval usleep );
+use URI::Escape::XS qw(uri_unescape);
 
 my %entities = ( users => 1, visits => 1, locations => 1 );
 
@@ -54,6 +55,9 @@ sub _form_req {
   my $req = shift;
 
   my %vars = map { split '=', $_ } split( '&', $req->{QUERY_STRING} );
+
+  $vars{country} = decode_utf8( uri_unescape( $vars{country} ) )
+      if $vars{country};
 
   my $content;
   if ( $req->{CONTENT_LENGTH} ) {
