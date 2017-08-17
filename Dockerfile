@@ -18,9 +18,12 @@ RUN \
     libipc-sharelite-perl \
     libjson-xs-perl \
     libmemory-usage-perl \
+    libplack-perl \
     libsereal-perl \
     procps \
     unzip \
+    uwsgi \
+    uwsgi-plugin-psgi \
 
   && cpanm \
     https://github.com/Mons/AnyEvent-HTTP-Server-II.git \

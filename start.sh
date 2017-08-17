@@ -8,4 +8,4 @@ cd /
 
 top -b &
 
-/usr/local/bin/avery_http_server2.pl
+uwsgi --http-socket 0.0.0.0:80 -p 1 -L -l 128 --plugins psgi --psgi /usr/local/bin/avery.psgi
