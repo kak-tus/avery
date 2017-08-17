@@ -106,7 +106,14 @@ sub _process {
     $STAT{$key}++;
 
     if ( $CACHE{$key} ) {
-      return [ $CACHE{$key}->{code}, [], [ $CACHE{$key}->{data} ] ];
+      return [
+        $CACHE{$key}->{code},
+        [ 'Content-Type'   => 'application/json; charset=utf-8',
+          'Content-length' => length( $CACHE{$key}->{data} ),
+          'Connection'     => 'close',
+        ],
+        [ $CACHE{$key}->{data} ]
+      ];
     }
 
     $q->{key} = $key;
@@ -253,7 +260,14 @@ sub _store {
     $CACHE{ $q->{key} } = { code => $code, data => $data };
   }
 
-  return [ $code, [], [$data] ];
+  return [
+    $code,
+    [ 'Content-Type'   => 'application/json; charset=utf-8',
+      'Content-length' => length($data),
+      'Connection'     => 'close',
+    ],
+    [$data]
+  ];
 
   return;
 }
