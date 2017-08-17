@@ -156,7 +156,7 @@ sub _process {
         return _404($q);
       }
 
-      return _200( $q, $JSON->encode($val) );
+      return _200( $q, $val );
     }
     elsif ( $q->{data}{method} eq 'POST' ) {
       $STAGE = 2;

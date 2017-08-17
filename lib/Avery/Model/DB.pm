@@ -94,6 +94,7 @@ sub create {
     }
   }
 
+  $val->{encoded} = $JSON->encode($val);
   $DAT->{$entity}{ $val->{id} } = $val;
 
   if ( $entity eq 'visits' ) {
@@ -129,7 +130,8 @@ sub read {
   my $self = shift;
   my ( $entity, $id ) = @_;
 
-  return $DAT->{$entity}{$id};
+  return unless $DAT->{$entity}{$id};
+  return $DAT->{$entity}{$id}{encoded};
 }
 
 sub update {
@@ -150,6 +152,9 @@ sub update {
   foreach my $key ( keys %$val ) {
     $new->{$key} = $val->{$key};
   }
+
+  delete $new->{encoded};
+  $new->{encoded} = $JSON->encode($new);
 
   if (
     $entity eq 'users'
