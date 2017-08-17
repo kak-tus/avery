@@ -19,6 +19,7 @@ RUN \
     libjson-xs-perl \
     libmemory-usage-perl \
     libsereal-perl \
+    procps \
     unzip \
 
   && cpanm \
