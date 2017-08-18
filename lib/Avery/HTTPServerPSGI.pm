@@ -100,14 +100,14 @@ sub _process {
     $STAT{ $q->{key} } //= 0;
     $STAT{ $q->{key} }++;
 
-    if ( $CACHE{$key} ) {
+    if ( $CACHE{ $q->{key} } ) {
       return [
-        $CACHE{$key}->{code},
+        $CACHE{ $q->{key} }->{code},
         [ 'Content-Type'   => 'application/json; charset=utf-8',
           'Content-length' => length( $CACHE{$key}->{data} ),
           'Connection'     => 'close',
         ],
-        [ $CACHE{$key}->{data} ]
+        [ $CACHE{ $q->{key} }->{data} ]
       ];
     }
   }
