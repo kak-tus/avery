@@ -104,7 +104,7 @@ sub _process {
       return [
         $CACHE{ $q->{key} }->{code},
         [ 'Content-Type'   => 'application/json; charset=utf-8',
-          'Content-length' => length( $CACHE{$key}->{data} ),
+          'Content-length' => length( $CACHE{ $q->{key} }->{data} ),
           'Connection'     => 'close',
         ],
         [ $CACHE{ $q->{key} }->{data} ]
