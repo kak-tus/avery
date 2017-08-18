@@ -5,23 +5,16 @@ use warnings;
 use v5.10;
 use utf8;
 
-use AnyEvent;
-use AnyEvent::Handle;
 use Avery::Model::DB;
 use Cpanel::JSON::XS;
 use Data::Dumper;
 use Encode qw(decode_utf8);
-use EV;
-use IO::Pipe;
-use List::Util qw(min);
-use Memory::Usage;
-use Mojo::Log;
-use Time::HiRes qw( gettimeofday tv_interval usleep );
-use URI::Escape::XS qw(uri_unescape);
+use Log::Fast;
+use Text::QueryString;
 
 my %entities = ( users => 1, visits => 1, locations => 1 );
 
-my $logger = Mojo::Log->new;
+my $logger = Log::Fast->new;
 
 my $db = Avery::Model::DB->new( logger => $logger );
 $db->load();
@@ -32,13 +25,12 @@ my $STAGE = 1;
 
 my %FORKS;
 
-my $mu = Memory::Usage->new();
-$mu->record('starting work');
-
 my %STAT;
 my %CACHE;
 
 my $PIPE_RESP;
+
+my $tqs = Text::QueryString->new;
 
 sub app {
   my $self = shift;
@@ -56,10 +48,11 @@ sub _form_req {
 
   my %vars;
   if ( $req->{QUERY_STRING} ) {
-    %vars = map { split '=', $_ } split( '&', $req->{QUERY_STRING} );
+    %vars = $tqs->parse( $req->{QUERY_STRING} );
 
-    $vars{country} = decode_utf8( uri_unescape( $vars{country} ) )
-        if $vars{country};
+    if ( $vars{country} ) {
+      $vars{country} = decode_utf8( $vars{country} );
+    }
   }
 
   my $content;

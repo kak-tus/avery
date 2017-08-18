@@ -10,8 +10,6 @@ use Cpanel::JSON::XS;
 use Data::Dumper;
 use DateTime;
 use DateTime::TimeZone;
-use Encode qw(encode_utf8);
-use List::Util qw(any);
 use Time::HiRes;
 
 our $DAT;
@@ -60,7 +58,7 @@ sub load {
   push @files, glob '/tmp/unzip/visits*.json';
 
   my $start = Time::HiRes::time;
-  $self->{logger}->info("Start $start");
+  $self->{logger}->INFO("Start $start");
 
   foreach my $file (@files) {
     open my $fl, "$file";
@@ -77,7 +75,7 @@ sub load {
   }
 
   my $end = Time::HiRes::time;
-  $self->{logger}->info( "Loaded $end, diff " . ( $end - $start ) );
+  $self->{logger}->INFO( "Loaded $end, diff " . ( $end - $start ) );
 
   return;
 }
