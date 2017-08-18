@@ -71,7 +71,8 @@ sub _form_req {
       path    => $req->{PATH_INFO},
       content => $content,
       vars    => \%vars,
-    }
+    },
+    key => $req->{REQUEST_URI},
   };
 
   return handle_request($q);
@@ -96,14 +97,8 @@ sub _process {
 
   ## кэш только для долгих запросов
   if ( $q->{data}{method} eq 'GET' && scalar(@path) == 4 ) {
-    my $key
-        = $q->{data}{path} . '_'
-        . join( '_',
-      map { $_ . '_' . $q->{data}{vars}{$_} }
-      sort keys %{ $q->{data}{vars} } );
-
-    $STAT{$key} //= 0;
-    $STAT{$key}++;
+    $STAT{ $q->{key} } //= 0;
+    $STAT{ $q->{key} }++;
 
     if ( $CACHE{$key} ) {
       return [
@@ -115,8 +110,6 @@ sub _process {
         [ $CACHE{$key}->{data} ]
       ];
     }
-
-    $q->{key} = $key;
   }
 
   if ( scalar(@path) == 3
