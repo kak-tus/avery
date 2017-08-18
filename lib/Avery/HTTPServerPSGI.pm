@@ -72,7 +72,7 @@ sub _form_req {
       content => $content,
       vars    => \%vars,
     },
-    key => $req->{REQUEST_URI},
+    req_uri => $req->{REQUEST_URI},
   };
 
   return handle_request($q);
@@ -97,7 +97,7 @@ sub _process {
 
   ## кэш только для долгих запросов
   if ( $q->{data}{method} eq 'GET' && scalar(@path) == 4 ) {
-    $STAT{ $q->{key} } //= 0;
+    $q->{key} = $q->{req_uri};
     $STAT{ $q->{key} }++;
 
     if ( $CACHE{ $q->{key} } ) {
