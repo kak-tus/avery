@@ -366,7 +366,7 @@ sub avg {
 
   return 0 unless $cnt;
 
-  my $avg = sprintf( '%.5f', ( $sum / $cnt ) ) + 0;
+  my $avg = sprintf( '%.5f', ( $sum / $cnt + 0.0000001 ) ) + 0;
 
   return $avg;
 }
