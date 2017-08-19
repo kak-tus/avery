@@ -10,6 +10,7 @@ RUN \
     libclone-perl \
     libcpanel-json-xs-perl \
     libdatetime-perl \
+    liblist-moreutils-perl \
     liblog-fast-perl \
     libmodule-install-perl \
     libplack-perl \

@@ -11,8 +11,9 @@ use Data::Dumper;
 use DateTime;
 use DateTime::TimeZone;
 use Time::HiRes;
+use List::MoreUtils qw( firstidx bsearchidx );
 
-our $DAT;
+my $DAT;
 
 my $JSON = Cpanel::JSON::XS->new->utf8;
 
@@ -96,11 +97,23 @@ sub create {
   $DAT->{$entity}{ $val->{id} } = $val;
 
   if ( $entity eq 'visits' ) {
-    $DAT->{_location_visit_by_user}{ $val->{user} }{ $val->{visited_at} }
-        { $val->{id} } = {
+    my $part = int( $val->{visited_at} / 10000000 );
+
+    my $pos = firstidx { $_->{visit}{visited_at} > $val->{visited_at} }
+    @{ $DAT->{_location_visit_by_user}{ $val->{user} }{$part} };
+
+    if ( $pos < 0 ) {
+      push @{ $DAT->{_location_visit_by_user}{ $val->{user} }{$part} }, {};
+    }
+    else {
+      splice @{ $DAT->{_location_visit_by_user}{ $val->{user} }{$part} },
+          $pos, 0, ( {} );
+    }
+
+    $DAT->{_location_visit_by_user}{ $val->{user} }{$part}[$pos] = {
       location => $DAT->{locations}{ $val->{location} },
       visit    => $val,
-        };
+    };
 
     my $years = _years( $DAT->{users}{ $val->{user} }{birth_date} );
 
@@ -229,14 +242,30 @@ sub update {
       || $new->{location} != $orig->{location} )
       )
   {
-    delete $DAT->{_location_visit_by_user}{ $orig->{user} }
-        { $orig->{visited_at} }{$id};
+    my $orig_part = int( $orig->{visited_at} / 10000000 );
+    my $part      = int( $new->{visited_at} / 10000000 );
 
-    $DAT->{_location_visit_by_user}{ $new->{user} }{ $new->{visited_at} }{$id}
-        = {
+    my $orig_pos = bsearchidx { $_->{visit}{id} <=> $id }
+    @{ $DAT->{_location_visit_by_user}{ $orig->{user} }{$orig_part} };
+
+    splice @{ $DAT->{_location_visit_by_user}{ $orig->{user} }{$orig_part} },
+        $orig_pos, 1;
+
+    my $pos = firstidx { $_->{visit}{visited_at} > $new->{visited_at} }
+    @{ $DAT->{_location_visit_by_user}{ $new->{user} }{$part} };
+
+    if ( $pos < 0 ) {
+      push @{ $DAT->{_location_visit_by_user}{ $new->{user} }{$part} }, {};
+    }
+    else {
+      splice @{ $DAT->{_location_visit_by_user}{ $new->{user} }{$part} },
+          $pos, 0, ( {} );
+    }
+
+    $DAT->{_location_visit_by_user}{ $new->{user} }{$part}[$pos] = {
       location => $DAT->{locations}{ $new->{location} },
       visit    => $new,
-        };
+    };
   }
 
   return 1;
@@ -281,23 +310,34 @@ sub users_visits {
 
   return -1 unless $DAT->{users}{$id};
 
-  my @keys;
-  if ( $params->{fromDate} || $params->{toDate} ) {
-    $params->{fromDate} //= 0;
-    $params->{toDate}   //= 2147483647;
-    @keys = sort { $a <=> $b }
-        grep { $_ > $params->{fromDate} && $_ < $params->{toDate} }
-        keys %{ $DAT->{_location_visit_by_user}{$id} };
+  my ( $from, $to ) = ( 0, 160 );
+  if ( $params->{fromDate} ) {
+    $from = int( $params->{fromDate} / 10000000 );
   }
-  else {
-    @keys = sort { $a <=> $b } keys %{ $DAT->{_location_visit_by_user}{$id} };
+
+  if ( $params->{toDate} ) {
+    $to = int( $params->{toDate} / 10000000 ) + 1;
   }
 
   my @res;
 
-  foreach my $key (@keys) {
-    foreach my $val ( values %{ $DAT->{_location_visit_by_user}{$id}{$key} } )
+  for ( my $part = $from; $part < $to; $part++ ) {
+    next unless $DAT->{_location_visit_by_user}{$id}{$part};
+
+    for (
+      my $i = 0;
+      $i < scalar( @{ $DAT->{_location_visit_by_user}{$id}{$part} } );
+      $i++
+        )
     {
+      my $val = $DAT->{_location_visit_by_user}{$id}{$part}[$i];
+
+      next
+          if $params->{fromDate}
+          && $val->{visit}{visited_at} <= $params->{fromDate};
+      next
+          if $params->{toDate}
+          && $val->{visit}{visited_at} >= $params->{toDate};
       next
           if defined $params->{country}
           && $val->{location}{country} ne $params->{country};
