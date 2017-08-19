@@ -11,7 +11,7 @@ use Data::Dumper;
 use DateTime;
 use DateTime::TimeZone;
 use Time::HiRes;
-use List::MoreUtils qw( firstidx bsearchidx );
+use List::MoreUtils qw( firstidx );
 
 my $DAT;
 
@@ -245,7 +245,7 @@ sub update {
     my $orig_part = int( $orig->{visited_at} / 10000000 );
     my $part      = int( $new->{visited_at} / 10000000 );
 
-    my $orig_pos = bsearchidx { $_->{visit}{id} <=> $id }
+    my $orig_pos = firstidx { $_->{visit}{id} == $id }
     @{ $DAT->{_location_visit_by_user}{ $orig->{user} }{$orig_part} };
 
     splice @{ $DAT->{_location_visit_by_user}{ $orig->{user} }{$orig_part} },
