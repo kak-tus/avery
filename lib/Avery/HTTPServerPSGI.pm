@@ -153,13 +153,7 @@ sub app {
       && $path[3] eq 'visits'
       && $req->{REQUEST_METHOD} eq 'GET' )
     {
-      my %args;
-      foreach (qw( fromDate toDate country toDistance )) {
-        next unless defined $vars{$_};
-        $args{$_} = $vars{$_};
-      }
-
-      my $vals = $db->users_visits( $path[2], %args );
+      my $vals = $db->users_visits( $path[2], \%vars );
 
       if ( $vals == -1 ) {
         return _store( $q, 404, '{}' );
@@ -177,13 +171,7 @@ sub app {
       && $path[3] eq 'avg'
       && $req->{REQUEST_METHOD} eq 'GET' )
     {
-      my %args;
-      foreach (qw( fromDate toDate fromAge toAge gender )) {
-        next unless defined $vars{$_};
-        $args{$_} = $vars{$_};
-      }
-
-      my $avg = $db->avg( $path[2], %args );
+      my $avg = $db->avg( $path[2], \%vars );
 
       if ( $avg == -1 ) {
         return _store( $q, 404, '{}' );
