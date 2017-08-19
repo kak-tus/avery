@@ -13,6 +13,7 @@ RUN \
     liblog-fast-perl \
     libmodule-install-perl \
     libplack-perl \
+    nginx \
     procps \
     unzip \
     uwsgi \
@@ -32,5 +33,6 @@ EXPOSE 80
 COPY start.sh /usr/local/bin/start.sh
 COPY bin /usr/local/bin
 COPY lib /usr/share/perl5
+COPY nginx.conf /etc/nginx/nginx.conf
 
 CMD ["/usr/local/bin/start.sh"]

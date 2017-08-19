@@ -8,4 +8,8 @@ cd /
 
 top -b &
 
-uwsgi --http-socket 0.0.0.0:80 -p 1 -L -l 128 --plugins psgi --psgi /usr/local/bin/avery.psgi
+nginx
+
+# uwsgi --http-socket 0.0.0.0:80 -p 1 -L -l 128 --plugins psgi --psgi /usr/local/bin/avery.psgi
+
+uwsgi -s /tmp/uwsgi.sock -p 1 -L -l 128 --uid www-data --gid www-data --plugins psgi --psgi /usr/local/bin/avery.psgi
