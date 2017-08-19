@@ -75,7 +75,14 @@ sub app {
 
     ## кэш только для долгих запросов
     if ( $req->{REQUEST_METHOD} eq 'GET' && scalar(@path) == 4 ) {
-      $q->{key} = $req->{REQUEST_URI};
+      $q->{key}
+          = $req->{PATH_INFO} . '_'
+          . join(
+        '_', map { $_ . '_' . $vars{$_} }
+            sort keys %vars
+          );
+
+      $STAT{ $q->{key} } //= 0;
       $STAT{ $q->{key} }++;
 
       if ( $CACHE{ $q->{key} } ) {
