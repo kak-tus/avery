@@ -63,6 +63,15 @@ sub load {
   $self->{logger}->INFO("Start $start");
 
   foreach my $file (@files) {
+
+    # use Devel::Size qw(total_size);
+    # $self->{logger}->INFO( total_size( $DAT->{visits} ) );
+    # $self->{logger}->INFO( total_size( $DAT->{_location_visit_by_user} ) );
+    # $self->{logger}->INFO( total_size( $DAT->{_location_visits} ) );
+    # $self->{logger}->INFO( total_size( $DAT->{_location_avg} ) );
+    # $self->{logger}->INFO( total_size( $DAT->{_user_avg} ) );
+    # $self->{logger}->INFO($file);
+
     open my $fl, "$file";
     my $st = <$fl>;
     close $fl;
@@ -94,11 +103,10 @@ sub create {
     }
   }
 
-  $val->{encoded} = $JSON->encode($val);
-  $DAT->{$entity}{ $val->{id} } = $val;
+  $DAT->{$entity}{ $val->{id} } = $JSON->encode($val);
 
   if ( $entity eq 'visits' ) {
-    my $cpos = firstidx { $_->{visit}{visited_at} > $val->{visited_at} }
+    my $cpos = firstidx { $_->{v} > $val->{visited_at} }
     @{ $DAT->{_location_visit_by_user}{ $val->{user} } };
 
     my $pos;
@@ -112,45 +120,36 @@ sub create {
           $pos, 0, ( {} );
     }
 
-    my $posref = [$pos];
+    my $posref = \$pos;
+    my $loc    = $JSON->decode( $DAT->{locations}{ $val->{location} } );
 
     $DAT->{_location_visit_by_user}{ $val->{user} }[$pos] = {
-      location => $DAT->{locations}{ $val->{location} },
-      visit    => $val,
-      pos      => $posref,
+      p => $posref,
+      e => $JSON->encode(
+        { mark       => $val->{mark},
+          visited_at => $val->{visited_at},
+          place      => $loc->{place},
+        }
+      ),
+      v => $val->{visited_at},
+      c => $loc->{country},
+      d => $loc->{distance},
+      i => $val->{id},
     };
 
     my $part = int( $val->{visited_at} / 10000000 );
-    my $ds   = int( $DAT->{locations}{ $val->{location} }{distance} / 10 );
+    my $ds   = int( $loc->{distance} / 10 );
 
-    _index( 'vs', $val->{user} . '_' . $part, $posref );
-    _index( 'cn',
-      $val->{user} . '_' . $DAT->{locations}{ $val->{location} }{country},
+    _index( 'v', $val->{user} . '_' . $part,           $posref );
+    _index( 'c', $val->{user} . '_' . $loc->{country}, $posref );
+    _index( 'd', $val->{user} . '_' . $ds,             $posref );
+    _index( 'vc', $val->{user} . '_' . $part . '_' . $loc->{country},
       $posref );
-    _index( 'ds', $val->{user} . '_' . $ds, $posref );
-    _index(
-      'vscn',
-      $val->{user} . '_'
-          . $part . '_'
-          . $DAT->{locations}{ $val->{location} }{country},
-      $posref
-    );
-    _index( 'vsds', $val->{user} . '_' . $part . '_' . $ds, $posref );
-    _index(
-      'vscnds',
-      $val->{user} . '_'
-          . $part . '_'
-          . $DAT->{locations}{ $val->{location} }{country} . '_'
-          . $ds,
-      $posref
-    );
-    _index(
-      'cnds',
-      $val->{user} . '_'
-          . $DAT->{locations}{ $val->{location} }{country} . '_'
-          . $ds,
-      $posref
-    );
+    _index( 'vd', $val->{user} . '_' . $part . '_' . $ds, $posref );
+    _index( 'vcd',
+      $val->{user} . '_' . $part . '_' . $loc->{country} . '_' . $ds,
+      $posref );
+    _index( 'cd', $val->{user} . '_' . $loc->{country} . '_' . $ds, $posref );
 
     if ( $cpos >= 0 ) {
       for (
@@ -159,21 +158,22 @@ sub create {
         $i++
           )
       {
-        $DAT->{_location_visit_by_user}{ $val->{user} }[$i]{pos}[0]++;
+        ${ $DAT->{_location_visit_by_user}{ $val->{user} }[$i]{p} }++;
       }
     }
 
     $DAT->{_location_visits}{ $val->{location} }{ $val->{id} } = 1;
 
-    my $years = _years( $DAT->{users}{ $val->{user} }{birth_date} );
+    my $usr   = $JSON->decode( $DAT->{users}{ $val->{user} } );
+    my $years = _years( $usr->{birth_date} );
 
     $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
-        { $DAT->{users}{ $val->{user} }{gender} } ||= [ 0, 0 ];
+        { $usr->{gender} } ||= [ 0, 0 ];
 
     $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
-        { $DAT->{users}{ $val->{user} }{gender} }[0]++;
+        { $usr->{gender} }[0]++;
     $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
-        { $DAT->{users}{ $val->{user} }{gender} }[1] += $val->{mark};
+        { $usr->{gender} }[1] += $val->{mark};
 
     $DAT->{_user_avg}{ $val->{user} }{ $val->{location} }
         { $val->{visited_at} } ||= [ 0, 0 ];
@@ -191,8 +191,7 @@ sub read {
   my $self = shift;
   my ( $entity, $id ) = @_;
 
-  return unless $DAT->{$entity}{$id};
-  return $DAT->{$entity}{$id}{encoded};
+  return $DAT->{$entity}{$id};
 }
 
 sub update {
@@ -208,14 +207,14 @@ sub update {
     }
   }
 
+  $new = $JSON->decode($new);
   my $orig = clone($new);
 
   foreach my $key ( keys %$val ) {
     $new->{$key} = $val->{$key};
   }
 
-  delete $new->{encoded};
-  $new->{encoded} = $JSON->encode($new);
+  $DAT->{$entity}{$id} = $JSON->encode($new);
 
   if (
     $entity eq 'users'
@@ -254,22 +253,24 @@ sub update {
       || $new->{mark} ne $orig->{mark} )
       )
   {
-    my $orig_years = _years( $DAT->{users}{ $orig->{user} }{birth_date} );
-    my $years      = _years( $DAT->{users}{ $new->{user} }{birth_date} );
+    my $orig_user = $JSON->decode( $DAT->{users}{ $orig->{user} } );
+    my $user      = $JSON->decode( $DAT->{users}{ $new->{user} } );
+
+    my $orig_years = _years( $orig_user->{birth_date} );
+    my $years      = _years( $user->{birth_date} );
 
     $DAT->{_location_avg}{ $orig->{location} }{ $orig->{visited_at} }
-        {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }[0]--;
+        {$orig_years}{ $orig_user->{gender} }[0]--;
     $DAT->{_location_avg}{ $orig->{location} }{ $orig->{visited_at} }
-        {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }[1]
-        -= $orig->{mark};
+        {$orig_years}{ $orig_user->{gender} }[1] -= $orig->{mark};
 
-    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
-        { $DAT->{users}{ $new->{user} }{gender} } ||= [ 0, 0 ];
+    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }
+        {$years}{ $user->{gender} } ||= [ 0, 0 ];
 
-    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
-        { $DAT->{users}{ $new->{user} }{gender} }[0]++;
-    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
-        { $DAT->{users}{ $new->{user} }{gender} }[1] += $new->{mark};
+    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }
+        {$years}{ $user->{gender} }[0]++;
+    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }
+        {$years}{ $user->{gender} }[1] += $new->{mark};
 
     $DAT->{_user_avg}{ $orig->{user} }{ $orig->{location} }
         { $orig->{visited_at} }[0]--;
@@ -288,65 +289,61 @@ sub update {
   if (
     $entity eq 'locations'
     && ( $new->{distance} != $orig->{distance}
-      || $new->{country} ne $orig->{country} )
+      || $new->{country} ne $orig->{country}
+      || $new->{place} ne $orig->{place} )
       )
   {
     my $orig_ds = int( $orig->{distance} / 10 );
     my $ds      = int( $new->{distance} / 10 );
 
     foreach my $visid ( keys %{ $DAT->{_location_visits}{$id} } ) {
-      my $pos = firstidx { $_->{visit}{id} == $visid }
-      @{ $DAT->{_location_visit_by_user}{ $DAT->{visits}{$visid}{user} } };
+      my $visit = $JSON->decode( $DAT->{visits}{$visid} );
 
-      my $posref
-          = $DAT->{_location_visit_by_user}{ $DAT->{visits}{$visid}{user} }
-          [$pos]{pos};
-      my $part = int( $DAT->{visits}{$visid}{visited_at} / 10000000 );
+      my $pos = firstidx { $_->{i} == $visid }
+      @{ $DAT->{_location_visit_by_user}{ $visit->{user} } };
 
-      _del_index( 'cn',
-        $DAT->{visits}{$visid}{user} . '_' . $orig->{country}, $posref );
-      _del_index( 'ds', $DAT->{visits}{$visid}{user} . '_' . $orig_ds,
+      $DAT->{_location_visit_by_user}{ $visit->{user} }[$pos]{e}
+          = $JSON->encode(
+        { mark       => $visit->{mark},
+          visited_at => $visit->{visited_at},
+          place      => $new->{place},
+        }
+          );
+
+      $DAT->{_location_visit_by_user}{ $visit->{user} }[$pos]{c}
+          = $new->{country};
+      $DAT->{_location_visit_by_user}{ $visit->{user} }[$pos]{d}
+          = $new->{distance};
+
+      my $posref = $DAT->{_location_visit_by_user}{ $visit->{user} }[$pos]{p};
+      my $part   = int( $visit->{visited_at} / 10000000 );
+
+      _del_index( 'c', $visit->{user} . '_' . $orig->{country}, $posref );
+      _del_index( 'd', $visit->{user} . '_' . $orig_ds,         $posref );
+      _del_index( 'vc', $visit->{user} . '_' . $part . '_' . $orig->{country},
         $posref );
-      _del_index( 'vscn',
-        $DAT->{visits}{$visid}{user} . '_' . $part . '_' . $orig->{country},
-        $posref );
-      _del_index( 'vsds',
-        $DAT->{visits}{$visid}{user} . '_' . $part . '_' . $orig_ds,
+      _del_index( 'vd', $visit->{user} . '_' . $part . '_' . $orig_ds,
         $posref );
       _del_index(
-        'vscnds',
-        $DAT->{visits}{$visid}{user} . '_'
+        'vcd',
+        $visit->{user} . '_'
             . $part . '_'
             . $orig->{country} . '_'
             . $orig_ds,
         $posref
       );
-      _del_index(
-        'cnds',
-        $DAT->{visits}{$visid}{user} . '_'
-            . $orig->{country} . '_'
-            . $orig_ds,
-        $posref
-      );
+      _del_index( 'cd',
+        $visit->{user} . '_' . $orig->{country} . '_' . $orig_ds, $posref );
 
-      _index( 'cn', $DAT->{visits}{$visid}{user} . '_' . $new->{country},
+      _index( 'c', $visit->{user} . '_' . $new->{country}, $posref );
+      _index( 'd', $visit->{user} . '_' . $ds,             $posref );
+      _index( 'vc', $visit->{user} . '_' . $part . '_' . $new->{country},
         $posref );
-      _index( 'ds', $DAT->{visits}{$visid}{user} . '_' . $ds, $posref );
-      _index( 'vscn',
-        $DAT->{visits}{$visid}{user} . '_' . $part . '_' . $new->{country},
+      _index( 'vd', $visit->{user} . '_' . $part . '_' . $ds, $posref );
+      _index( 'vcd',
+        $visit->{user} . '_' . $part . '_' . $new->{country} . '_' . $ds,
         $posref );
-      _index( 'vsds', $DAT->{visits}{$visid}{user} . '_' . $part . '_' . $ds,
-        $posref );
-      _index(
-        'vscnds',
-        $DAT->{visits}{$visid}{user} . '_'
-            . $part . '_'
-            . $new->{country} . '_'
-            . $ds,
-        $posref
-      );
-      _index( 'cnds',
-        $DAT->{visits}{$visid}{user} . '_' . $new->{country} . '_' . $ds,
+      _index( 'cd', $visit->{user} . '_' . $new->{country} . '_' . $ds,
         $posref );
     }
   }
@@ -358,48 +355,40 @@ sub update {
       || $new->{location} != $orig->{location} )
       )
   {
+    my $orig_loc = $JSON->decode( $DAT->{locations}{ $orig->{location} } );
+    my $loc      = $JSON->decode( $DAT->{locations}{ $new->{location} } );
+
     my $orig_part = int( $orig->{visited_at} / 10000000 );
 
-    my $orig_pos = firstidx { $_->{visit}{id} == $id }
+    my $orig_pos = firstidx { $_->{i} == $id }
     @{ $DAT->{_location_visit_by_user}{ $orig->{user} } };
 
     splice @{ $DAT->{_location_visit_by_user}{ $orig->{user} } },
         $orig_pos, 1;
 
-    my $orig_posref = [$orig_pos];
-    my $orig_ds
-        = int( $DAT->{locations}{ $orig->{location} }{distance} / 10 );
+    my $orig_posref = \$orig_pos;
+    my $orig_ds     = int( $orig_loc->{distance} / 10 );
 
-    _del_index( 'vs', $orig->{user} . '_' . $orig_part, $orig_posref );
-
-    _del_index( 'cn',
-      $orig->{user} . '_' . $DAT->{locations}{ $orig->{location} }{country},
+    _del_index( 'v', $orig->{user} . '_' . $orig_part, $orig_posref );
+    _del_index( 'c', $orig->{user} . '_' . $orig_loc->{country},
       $orig_posref );
-    _del_index( 'ds', $orig->{user} . '_' . $orig_ds, $orig_posref );
-    _del_index(
-      'vscn',
-      $orig->{user} . '_'
-          . $orig_part . '_'
-          . $DAT->{locations}{ $orig->{location} }{country},
-      $orig_posref
-    );
-    _del_index( 'vsds', $orig->{user} . '_' . $orig_part . '_' . $orig_ds,
+    _del_index( 'd', $orig->{user} . '_' . $orig_ds, $orig_posref );
+    _del_index( 'vc',
+      $orig->{user} . '_' . $orig_part . '_' . $orig_loc->{country},
+      $orig_posref );
+    _del_index( 'vd', $orig->{user} . '_' . $orig_part . '_' . $orig_ds,
       $orig_posref );
     _del_index(
-      'vscnds',
+      'vcd',
       $orig->{user} . '_'
           . $orig_part . '_'
-          . $DAT->{locations}{ $orig->{location} }{country} . '_'
+          . $orig_loc->{country} . '_'
           . $orig_ds,
       $orig_posref
     );
-    _del_index(
-      'cnds',
-      $orig->{user} . '_'
-          . $DAT->{locations}{ $orig->{location} }{country} . '_'
-          . $orig_ds,
-      $orig_posref
-    );
+    _del_index( 'cd',
+      $orig->{user} . '_' . $orig_loc->{country} . '_' . $orig_ds,
+      $orig_posref );
 
     for (
       my $i = $orig_pos;
@@ -407,10 +396,10 @@ sub update {
       $i++
         )
     {
-      $DAT->{_location_visit_by_user}{ $orig->{user} }[$i]{pos}[0]--;
+      ${ $DAT->{_location_visit_by_user}{ $orig->{user} }[$i]{p} }--;
     }
 
-    my $cpos = firstidx { $_->{visit}{visited_at} > $new->{visited_at} }
+    my $cpos = firstidx { $_->{v} > $new->{visited_at} }
     @{ $DAT->{_location_visit_by_user}{ $new->{user} } };
 
     my $pos;
@@ -425,44 +414,33 @@ sub update {
     }
 
     my $part   = int( $new->{visited_at} / 10000000 );
-    my $posref = [$pos];
-    my $ds
-        = int( $DAT->{locations}{ $new->{location} }{distance} / 10 );
+    my $posref = \$pos;
+    my $ds     = int( $loc->{distance} / 10 );
 
     $DAT->{_location_visit_by_user}{ $new->{user} }[$pos] = {
-      location => $DAT->{locations}{ $new->{location} },
-      visit    => $new,
-      pos      => $posref,
+      p => $posref,
+      e => $JSON->encode(
+        { mark       => $new->{mark},
+          visited_at => $new->{visited_at},
+          place      => $loc->{place},
+        }
+      ),
+      v => $new->{visited_at},
+      c => $loc->{country},
+      d => $loc->{distance},
+      i => $id,
     };
 
-    _index( 'vs', $new->{user} . '_' . $part, $posref );
-    _index( 'cn',
-      $new->{user} . '_' . $DAT->{locations}{ $new->{location} }{country},
+    _index( 'v', $new->{user} . '_' . $part,           $posref );
+    _index( 'c', $new->{user} . '_' . $loc->{country}, $posref );
+    _index( 'd', $new->{user} . '_' . $ds,             $posref );
+    _index( 'vc', $new->{user} . '_' . $part . '_' . $loc->{country},
       $posref );
-    _index( 'ds', $new->{user} . '_' . $ds, $posref );
-    _index(
-      'vscn',
-      $new->{user} . '_'
-          . $part . '_'
-          . $DAT->{locations}{ $new->{location} }{country},
-      $posref
-    );
-    _index( 'vsds', $new->{user} . '_' . $part . '_' . $ds, $posref );
-    _index(
-      'vscnds',
-      $new->{user} . '_'
-          . $part . '_'
-          . $DAT->{locations}{ $new->{location} }{country} . '_'
-          . $ds,
-      $posref
-    );
-    _index(
-      'cnds',
-      $new->{user} . '_'
-          . $DAT->{locations}{ $new->{location} }{country} . '_'
-          . $ds,
-      $posref
-    );
+    _index( 'vd', $new->{user} . '_' . $part . '_' . $ds, $posref );
+    _index( 'vcd',
+      $new->{user} . '_' . $part . '_' . $loc->{country} . '_' . $ds,
+      $posref );
+    _index( 'cd', $new->{user} . '_' . $loc->{country} . '_' . $ds, $posref );
 
     if ( $cpos >= 0 ) {
       for (
@@ -471,7 +449,7 @@ sub update {
         $i++
           )
       {
-        $DAT->{_location_visit_by_user}{ $new->{user} }[$i]{pos}[0]++;
+        ${ $DAT->{_location_visit_by_user}{ $new->{user} }[$i]{p} }++;
       }
     }
 
@@ -516,7 +494,8 @@ sub users_visits {
 
   foreach my $key ( keys %$params ) {
     next unless $VALIDATION{$key};
-    return -2 if _validate( 'users_visits', $key, $params->{$key} ) == -2;
+    return -2
+        if _validate( 'users_visits', $key, $params->{$key} ) == -2;
   }
 
   return -1 unless $DAT->{users}{$id};
@@ -530,7 +509,7 @@ sub users_visits {
     my $part1 = int( ( $params->{fromDate} || 0 ) / 10000000 );
     my $part2 = int( ( $params->{toDate}   || 1600000000 ) / 10000000 );
     for ( $part1 .. $part2 ) {
-      my $k = _get_index( 'vs', $id . '_' . $_ );
+      my $k = _get_index( 'v', $id . '_' . $_ );
       next unless $k && scalar @$k;
       push @$keys, @$k;
     }
@@ -540,7 +519,7 @@ sub users_visits {
     && !$params->{toDate}
     && !$params->{toDistance} )
   {
-    $keys = _get_index( 'cn', $id . '_' . $params->{country} );
+    $keys = _get_index( 'c', $id . '_' . $params->{country} );
   }
   elsif ( $params->{toDistance}
     && !$params->{fromDate}
@@ -550,12 +529,12 @@ sub users_visits {
     my @t;
     my $ds = int( $params->{toDistance} / 10 );
     for ( 0 .. $ds ) {
-      my $k = _get_index( 'ds', $id . '_' . $_ );
+      my $k = _get_index( 'd', $id . '_' . $_ );
       next unless $k && scalar @$k;
       push @t, @$k;
     }
 
-    my @t2 = sort { $a->[0] <=> $b->[0] } @t;
+    my @t2 = sort { $$a <=> $$b } @t;
     $keys = \@t2;
   }
   elsif ( ( $params->{fromDate} || $params->{toDate} )
@@ -565,7 +544,7 @@ sub users_visits {
     my $part1 = int( ( $params->{fromDate} || 0 ) / 10000000 );
     my $part2 = int( ( $params->{toDate}   || 1600000000 ) / 10000000 );
     for ( $part1 .. $part2 ) {
-      my $k = _get_index( 'vscn', $id . '_' . $_ . '_' . $params->{country} );
+      my $k = _get_index( 'vc', $id . '_' . $_ . '_' . $params->{country} );
       next unless $k && scalar @$k;
       push @$keys, @$k;
     }
@@ -580,13 +559,13 @@ sub users_visits {
     my $ds = int( $params->{toDistance} / 10 );
     for my $part ( $part1 .. $part2 ) {
       for ( 0 .. $ds ) {
-        my $k = _get_index( 'vsds', $id . '_' . $part . '_' . $_ );
+        my $k = _get_index( 'vd', $id . '_' . $part . '_' . $_ );
         next unless $k && scalar @$k;
         push @t, @$k;
       }
     }
 
-    my @t2 = sort { $a->[0] <=> $b->[0] } @t;
+    my @t2 = sort { $$a <=> $$b } @t;
     $keys = \@t2;
   }
   elsif ( ( $params->{fromDate} || $params->{toDate} )
@@ -599,53 +578,49 @@ sub users_visits {
     my $ds = int( $params->{toDistance} / 10 );
     for my $part ( $part1 .. $part2 ) {
       for ( 0 .. $ds ) {
-        my $k = _get_index( 'vscnds',
+        my $k = _get_index( 'vcd',
           $id . '_' . $part . '_' . $params->{country} . '_' . $_ );
         next unless $k && scalar @$k;
         push @t, @$k;
       }
     }
 
-    my @t2 = sort { $a->[0] <=> $b->[0] } @t;
+    my @t2 = sort { $$a <=> $$b } @t;
     $keys = \@t2;
   }
   else {
     my $part1 = 0;
     my $part2 = int( 1600000000 / 10000000 );
     for ( $part1 .. $part2 ) {
-      my $k = _get_index( 'vs', $id . '_' . $_ );
+      my $k = _get_index( 'v', $id . '_' . $_ );
       next unless $k && scalar @$k;
       push @$keys, @$k;
     }
   }
 
-  my @res;
+  my $res = '';
 
   foreach my $i (@$keys) {
-    my $val = $DAT->{_location_visit_by_user}{$id}[ $i->[0] ];
+    my $val = $DAT->{_location_visit_by_user}{$id}[$$i];
 
     next
         if $params->{fromDate}
-        && $val->{visit}{visited_at} <= $params->{fromDate};
+        && $val->{v} <= $params->{fromDate};
     next
         if $params->{toDate}
-        && $val->{visit}{visited_at} >= $params->{toDate};
+        && $val->{v} >= $params->{toDate};
     next
         if defined $params->{country}
-        && $val->{location}{country} ne $params->{country};
+        && $val->{c} ne $params->{country};
     next
         if defined $params->{toDistance}
-        && $val->{location}{distance} >= $params->{toDistance};
+        && $val->{d} >= $params->{toDistance};
 
-    my %visit = (
-      mark       => $val->{visit}{mark},
-      visited_at => $val->{visit}{visited_at},
-      place      => $val->{location}{place},
-    );
-    push @res, \%visit;
+    $res .= $val->{e} . ',';
   }
 
-  return \@res;
+  chop $res;
+  return "[$res]";
 }
 
 sub avg {
@@ -683,7 +658,8 @@ sub avg {
             if $params->{toAge} && $age >= $params->{toAge};
 
         foreach my $gender (@genders) {
-          next unless $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[0];
+          next
+              unless $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[0];
           $cnt += $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[0];
           $sum += $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[1];
         }
@@ -703,7 +679,10 @@ sub _years {
 
   return $DAT->{_years}{$birth_date} if $DAT->{_years}{$birth_date};
 
-  my $dt = DateTime->from_epoch( epoch => $birth_date, time_zone => $TZ, );
+  my $dt = DateTime->from_epoch(
+    epoch     => $birth_date,
+    time_zone => $TZ,
+  );
   $DAT->{_years}{$birth_date}
       = $TODAY->clone->subtract_datetime($dt)->years();
 
@@ -713,20 +692,19 @@ sub _years {
 sub _index {
   my ( $name, $val, $pos ) = @_;
 
-  my $cpos
-      = bsearchidx { $_->[0] <=> $pos->[0] }
-  @{ $DAT->{"_idx_${name}_$val"} };
+  my $cpos = bsearchidx { $$_ <=> $$pos }
+  @{ $DAT->{"i${name}$val"} };
 
   if ( $cpos < 0 ) {
     $cpos
-        = firstidx { $_->[0] > $pos->[0] } @{ $DAT->{"_idx_${name}_$val"} };
+        = firstidx { $$_ > $$pos } @{ $DAT->{"i${name}$val"} };
   }
 
   if ( $cpos < 0 ) {
-    push @{ $DAT->{"_idx_${name}_$val"} }, $pos;
+    push @{ $DAT->{"i${name}$val"} }, $pos;
   }
   else {
-    splice @{ $DAT->{"_idx_${name}_$val"} }, $cpos, 0, ($pos);
+    splice @{ $DAT->{"i${name}$val"} }, $cpos, 0, ($pos);
   }
 
   return;
@@ -735,18 +713,17 @@ sub _index {
 sub _get_index {
   my ( $name, $val ) = @_;
 
-  return $DAT->{"_idx_${name}_$val"};
+  return $DAT->{"i${name}$val"};
 }
 
 sub _del_index {
   my ( $name, $val, $pos ) = @_;
 
-  my $cpos
-      = bsearchidx { $_->[0] <=> $pos->[0] }
-  @{ $DAT->{"_idx_${name}_$val"} };
+  my $cpos = bsearchidx { $$_ <=> $$pos }
+  @{ $DAT->{"i${name}$val"} };
 
   if ( $cpos >= 0 ) {
-    splice @{ $DAT->{"_idx_${name}_$val"} }, $cpos, 1;
+    splice @{ $DAT->{"i${name}$val"} }, $cpos, 1;
   }
   else {
     warn 'Del index failed ';

@@ -162,14 +162,14 @@ sub app {
     {
       my $vals = $db->users_visits( $path[2], \%vars );
 
-      if ( $vals == -1 ) {
+      if ( $vals eq '-1' ) {
         return _store( $q, 404, '{}' );
       }
-      elsif ( $vals == -2 ) {
+      elsif ( $vals eq '-2' ) {
         return _store( $q, 400, '{}' );
       }
       else {
-        return _store( $q, 200, $JSON->encode( { visits => $vals } ) );
+        return _store( $q, 200, qq[{"visits":$vals}] );
       }
     }
     elsif ( scalar(@path) == 4
