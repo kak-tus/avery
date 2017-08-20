@@ -499,7 +499,8 @@ sub users_visits {
         if _validate( 'users_visits', $key, $params->{$key} ) == -2;
   }
 
-  return -1 unless $DAT->{users}{$id};
+  return -1   unless $DAT->{users}{$id};
+  return '[]' unless $DAT->{_location_visit_by_user}{$id};
 
   my $keys;
 
@@ -589,14 +590,36 @@ sub users_visits {
     my @t2 = sort { $$a <=> $$b } @t;
     $keys = \@t2;
   }
-  else {
-    my $part1 = 0;
-    my $part2 = int( 1600000000 / 10000000 );
-    for ( $part1 .. $part2 ) {
-      my $k = _get_index( 'v', $id . '_' . $_ );
+  elsif ( $params->{toDistance}
+    && $params->{country}
+    && !$params->{fromDate}
+    && !$params->{toDate} )
+  {
+    my @t;
+    my $ds = int( $params->{toDistance} / 10 );
+    for ( 0 .. $ds ) {
+      my $k = _get_index( 'cd', $id . '_' . $params->{country} . '_' . $_ );
       next unless $k && scalar @$k;
-      push @$keys, @$k;
+      push @t, @$k;
     }
+
+    my @t2 = sort { $$a <=> $$b } @t;
+    $keys = \@t2;
+  }
+  else {
+    my $res = '';
+
+    for (
+      my $i = 0;
+      $i < scalar( @{ $DAT->{_location_visit_by_user}{$id} } );
+      $i++
+        )
+    {
+      $res .= $DAT->{_location_visit_by_user}{$id}[$i]{e} . ',';
+    }
+
+    chop $res;
+    return "[$res]";
   }
 
   my $res = '';
