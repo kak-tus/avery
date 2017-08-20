@@ -352,7 +352,8 @@ sub update {
     $entity eq 'visits'
     && ( $new->{user} != $orig->{user}
       || $new->{visited_at} != $orig->{visited_at}
-      || $new->{location} != $orig->{location} )
+      || $new->{location} != $orig->{location}
+      || $new->{mark} != $orig->{mark} )
       )
   {
     my $orig_loc = $JSON->decode( $DAT->{locations}{ $orig->{location} } );
