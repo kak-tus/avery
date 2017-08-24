@@ -28,8 +28,6 @@ my %FORKS;
 my %STAT;
 my %CACHE;
 
-my $PIPE_RESP;
-
 my $tqs = Text::QueryString->new;
 
 my $headers = [
