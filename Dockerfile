@@ -26,6 +26,8 @@ RUN \
     ca-certificates \
     cpanminus \
 
+  && rm -rf /root/.cpanm \
+
   && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 80
