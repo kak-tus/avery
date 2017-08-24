@@ -272,26 +272,23 @@ sub _validate {
 }
 
 sub users_visits {
-  my ( $self, $id, $params ) = @_;
+  my $self   = shift;
+  my $id     = shift;
+  my %params = @_;
 
-  foreach my $key ( keys %$params ) {
+  foreach my $key ( keys %params ) {
     next unless $VALIDATION{$key};
-    return -2 if _validate( 'users_visits', $key, $params->{$key} ) == -2;
+    return -2 if _validate( 'users_visits', $key, $params{$key} ) == -2;
   }
 
   return -1 unless $DAT->{users}{$id};
 
-  my $prm_fd = $params->{fromDate};
-  my $prm_td = $params->{toDate};
-  my $prm_cn = $params->{country};
-  my $prm_ds = $params->{toDistance};
-
   my @keys;
-  if ( $prm_fd || $prm_td ) {
-    $prm_fd //= 0;
-    $prm_td //= 2147483647;
+  if ( $params{fromDate} || $params{toDate} ) {
+    $params{fromDate} //= 0;
+    $params{toDate}   //= 2147483647;
     @keys = sort { $a <=> $b }
-        grep { $_ > $prm_fd && $_ < $prm_td }
+        grep { $_ > $params{fromDate} && $_ < $params{toDate} }
         keys %{ $DAT->{_location_visit_by_user}{$id} };
   }
   else {
@@ -303,8 +300,12 @@ sub users_visits {
   foreach my $key (@keys) {
     foreach my $val ( values %{ $DAT->{_location_visit_by_user}{$id}{$key} } )
     {
-      next if $prm_cn && $val->{location}{country} ne $prm_cn;
-      next if $prm_ds && $val->{location}{distance} >= $prm_ds;
+      next
+          if defined $params{country}
+          && $val->{location}{country} ne $params{country};
+      next
+          if defined $params{toDistance}
+          && $val->{location}{distance} >= $params{toDistance};
 
       my %visit = (
         mark       => $val->{visit}{mark},
@@ -319,27 +320,24 @@ sub users_visits {
 }
 
 sub avg {
-  my ( $self, $id, $params ) = @_;
+  my $self   = shift;
+  my $id     = shift;
+  my %params = @_;
 
-  foreach my $key ( keys %$params ) {
+  foreach my $key ( keys %params ) {
     next unless $VALIDATION{$key};
-    return -2 if _validate( 'avg', $key, $params->{$key} ) == -2;
+    return -2 if _validate( 'avg', $key, $params{$key} ) == -2;
   }
 
   return -1 unless $DAT->{locations}{$id};
 
   my ( $sum, $cnt ) = ( 0, 0 );
 
-  my $prm_fd = $params->{fromDate};
-  my $prm_td = $params->{toDate};
-  my $prm_fa = $params->{fromAge};
-  my $prm_ta = $params->{toAge};
-
   my @keys;
-  if ( $prm_fd || $prm_td ) {
-    $prm_fd //= 0;
-    $prm_td //= 2147483647;
-    @keys = grep { $_ > $prm_fd && $_ < $prm_td }
+  if ( $params{fromDate} || $params{toDate} ) {
+    $params{fromDate} //= 0;
+    $params{toDate}   //= 2147483647;
+    @keys = grep { $_ > $params{fromDate} && $_ < $params{toDate} }
         keys %{ $DAT->{_location_avg}{$id} };
   }
   else {
@@ -347,13 +345,15 @@ sub avg {
   }
 
   my @genders = qw( m f );
-  @genders = ( $params->{gender} ) if $params->{gender};
+  @genders = ( $params{gender} ) if $params{gender};
 
   foreach my $key (@keys) {
     foreach my $age ( keys %{ $DAT->{_location_avg}{$id}{$key} } ) {
       {
-        next if $prm_fa && $age < $prm_fa;
-        next if $prm_ta && $age >= $prm_ta;
+        next
+            if $params{fromAge} && $age < $params{fromAge};
+        next
+            if $params{toAge} && $age >= $params{toAge};
 
         foreach my $gender (@genders) {
           next unless $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[0];

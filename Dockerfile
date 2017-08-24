@@ -21,8 +21,6 @@ RUN \
 
   && cpanm -n Text::QueryString \
 
-  && rm -rf /root/.cpanm \
-
   && apt-get purge -y --auto-remove \
     build-essential \
     ca-certificates \
