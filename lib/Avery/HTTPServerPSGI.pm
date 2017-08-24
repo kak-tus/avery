@@ -32,207 +32,173 @@ my $PIPE_RESP;
 
 my $tqs = Text::QueryString->new;
 
+my $headers = [
+  'Content-length' => 0,
+  'Content-Type'   => 'application/json; charset=utf-8',
+  'Connection'     => 'Keep-Alive',
+];
+
 sub app {
   my $self = shift;
 
   my $app = sub {
     my $req = shift;
-    return _form_req($req);
-  };
 
-  return $app;
-}
+    my $qry_str = $req->{QUERY_STRING};
+    my %vars;
+    if ($qry_str) {
+      %vars = $tqs->parse($qry_str);
 
-sub _form_req {
-  my $req = shift;
-
-  my %vars;
-  if ( $req->{QUERY_STRING} ) {
-    %vars = $tqs->parse( $req->{QUERY_STRING} );
-
-    if ( $vars{country} ) {
-      $vars{country} = decode_utf8( $vars{country} );
-    }
-  }
-
-  my $content;
-  if ( $req->{CONTENT_LENGTH} ) {
-    my $fh = $req->{'psgi.input'};
-    my $cl = $req->{CONTENT_LENGTH};
-
-    $fh->seek( 0, 0 );
-    $fh->read( $content, $cl, 0 );
-    $fh->seek( 0, 0 );
-  }
-
-  my $q = {
-    data => {
-      method  => $req->{REQUEST_METHOD},
-      path    => $req->{PATH_INFO},
-      content => $content,
-      vars    => \%vars,
-    }
-  };
-
-  return handle_request($q);
-}
-
-sub handle_request {
-  my $q = shift;
-
-  if ( $q->{data}{method} ne 'POST' && $STAGE == 2 ) {
-    $STAGE = 3;
-    undef %CACHE;
-    undef %STAT;
-  }
-
-  return _process($q);
-}
-
-sub _process {
-  my $q = shift;
-
-  my @path = split '/', $q->{data}{path};
-
-  ## кэш только для долгих запросов
-  if ( $q->{data}{method} eq 'GET' && scalar(@path) == 4 ) {
-    my $key
-        = $q->{data}{path} . '_'
-        . join( '_',
-      map { $_ . '_' . $q->{data}{vars}{$_} }
-      sort keys %{ $q->{data}{vars} } );
-
-    $STAT{$key} //= 0;
-    $STAT{$key}++;
-
-    if ( $CACHE{$key} ) {
-      return [
-        $CACHE{$key}->{code},
-        [ 'Content-Type'   => 'application/json; charset=utf-8',
-          'Content-length' => length( $CACHE{$key}->{data} ),
-          'Connection'     => 'Keep-Alive',
-        ],
-        [ $CACHE{$key}->{data} ]
-      ];
+      if ( $vars{country} ) {
+        $vars{country} = decode_utf8( $vars{country} );
+      }
     }
 
-    $q->{key} = $key;
-  }
+    my $cont_len = $req->{CONTENT_LENGTH};
+    my $content;
+    if ($cont_len) {
+      my $fh = $req->{'psgi.input'};
+      my $cl = $cont_len;
 
-  if ( scalar(@path) == 3
-    && $entities{ $path[1] }
-    && $path[2] eq 'new'
-    && $q->{data}{method} eq 'POST' )
-  {
-    $STAGE = 2;
-
-    my $data = $q->{data}{content};
-    my $val = eval { $JSON->decode($data) };
-
-    unless ( $val && keys %$val ) {
-      return _store( $q, 400, '{}' );
+      $fh->seek( 0, 0 );
+      $fh->read( $content, $cl, 0 );
+      $fh->seek( 0, 0 );
     }
-    my $status = $db->create( $path[1], $val );
 
-    if ( $status == 1 ) {
-      return _store( $q, 200, '{}' );
-    }
-    elsif ( $status == -2 ) {
-      return _store( $q, 400, '{}' );
-    }
-  }
-  elsif ( scalar(@path) == 3
-    && $entities{ $path[1] }
-    && $path[2] =~ m/^\d+$/ )
-  {
-    if ( $q->{data}{method} eq 'GET' ) {
-      my $val = $db->read( $path[1], $path[2] );
+    my $req_mtd = $req->{REQUEST_METHOD};
 
-      unless ($val) {
-        return _store( $q, 404, '{}' );
+    if ( $req_mtd ne 'POST' && $STAGE == 2 ) {
+      $STAGE = 3;
+      undef %CACHE;
+      undef %STAT;
+    }
+
+    my @path = split '/', $req->{PATH_INFO};
+    my $pth_len = scalar(@path);
+
+    my $q = {};
+
+    ## кэш только для долгих запросов
+    if ( $req_mtd eq 'GET' && $pth_len == 4 ) {
+      my $key
+          = $req->{PATH_INFO} . '_'
+          . join(
+        '_', map { $_ . '_' . $vars{$_} }
+            sort keys %vars
+          );
+
+      $STAT{$key} //= 0;
+      $STAT{$key}++;
+
+      if ( $CACHE{$key} ) {
+        $headers->[1] = length( $CACHE{$key}->{data} );
+        return [ $CACHE{$key}->{code}, $headers, [ $CACHE{$key}->{data} ] ];
       }
 
-      return _store( $q, 200, $val );
+      $q->{key} = $key;
     }
-    elsif ( $q->{data}{method} eq 'POST' ) {
+
+    if ( $pth_len == 3
+      && $entities{ $path[1] }
+      && $path[2] eq 'new'
+      && $req_mtd eq 'POST' )
+    {
       $STAGE = 2;
 
-      my $data = $q->{data}{content};
-      my $val = eval { $JSON->decode($data) };
+      my $val = eval { $JSON->decode($content) };
 
       unless ( $val && keys %$val ) {
         return _store( $q, 400, '{}' );
       }
-
-      my $status = $db->update( $path[1], $path[2], $val );
+      my $status = $db->create( $path[1], $val );
 
       if ( $status == 1 ) {
         return _store( $q, 200, '{}' );
-      }
-      elsif ( $status == -1 ) {
-        return _store( $q, 404, '{}' );
       }
       elsif ( $status == -2 ) {
         return _store( $q, 400, '{}' );
       }
     }
+    elsif ( $pth_len == 3
+      && $entities{ $path[1] }
+      && $path[2] =~ m/^\d+$/ )
+    {
+      if ( $req_mtd eq 'GET' ) {
+        my $val = $db->read( $path[1], $path[2] );
+
+        unless ($val) {
+          return _store( $q, 404, '{}' );
+        }
+
+        return _store( $q, 200, $val );
+      }
+      elsif ( $req_mtd eq 'POST' ) {
+        $STAGE = 2;
+
+        my $val = eval { $JSON->decode($content) };
+
+        unless ( $val && keys %$val ) {
+          return _store( $q, 400, '{}' );
+        }
+
+        my $status = $db->update( $path[1], $path[2], $val );
+
+        if ( $status == 1 ) {
+          return _store( $q, 200, '{}' );
+        }
+        elsif ( $status == -1 ) {
+          return _store( $q, 404, '{}' );
+        }
+        elsif ( $status == -2 ) {
+          return _store( $q, 400, '{}' );
+        }
+      }
+      else {
+        return _store( $q, 404, '{}' );
+      }
+    }
+    elsif ( $pth_len == 4
+      && $path[1] eq 'users'
+      && $path[2] =~ m/^\d+$/
+      && $path[3] eq 'visits'
+      && $req_mtd eq 'GET' )
+    {
+      my $vals = $db->users_visits( $path[2], \%vars );
+
+      if ( $vals == -1 ) {
+        return _store( $q, 404, '{}' );
+      }
+      elsif ( $vals == -2 ) {
+        return _store( $q, 400, '{}' );
+      }
+      else {
+        return _store( $q, 200, $JSON->encode( { visits => $vals } ) );
+      }
+    }
+    elsif ( $pth_len == 4
+      && $path[1] eq 'locations'
+      && $path[2] =~ m/^\d+$/
+      && $path[3] eq 'avg'
+      && $req_mtd eq 'GET' )
+    {
+      my $avg = $db->avg( $path[2], \%vars );
+
+      if ( $avg == -1 ) {
+        return _store( $q, 404, '{}' );
+      }
+      elsif ( $avg == -2 ) {
+        return _store( $q, 400, '{}' );
+      }
+      else {
+        return _store( $q, 200, qq[{"avg":$avg}] );
+      }
+    }
     else {
       return _store( $q, 404, '{}' );
     }
-  }
-  elsif ( scalar(@path) == 4
-    && $path[1] eq 'users'
-    && $path[2] =~ m/^\d+$/
-    && $path[3] eq 'visits'
-    && $q->{data}{method} eq 'GET' )
-  {
-    my %args;
-    foreach (qw( fromDate toDate country toDistance )) {
-      next unless defined $q->{data}{vars}{$_};
-      $args{$_} = $q->{data}{vars}{$_};
-    }
+  };
 
-    my $vals = $db->users_visits( $path[2], %args );
-
-    if ( $vals == -1 ) {
-      return _store( $q, 404, '{}' );
-    }
-    elsif ( $vals == -2 ) {
-      return _store( $q, 400, '{}' );
-    }
-    else {
-      return _store( $q, 200, $JSON->encode( { visits => $vals } ) );
-    }
-  }
-  elsif ( scalar(@path) == 4
-    && $path[1] eq 'locations'
-    && $path[2] =~ m/^\d+$/
-    && $path[3] eq 'avg'
-    && $q->{data}{method} eq 'GET' )
-  {
-    my %args;
-    foreach (qw( fromDate toDate fromAge toAge gender )) {
-      next unless defined $q->{data}{vars}{$_};
-      $args{$_} = $q->{data}{vars}{$_};
-    }
-
-    my $avg = $db->avg( $path[2], %args );
-
-    if ( $avg == -1 ) {
-      return _store( $q, 404, '{}' );
-    }
-    elsif ( $avg == -2 ) {
-      return _store( $q, 400, '{}' );
-    }
-    else {
-      return _store( $q, 200, qq[{"avg":$avg}] );
-    }
-  }
-  else {
-    return _store( $q, 404, '{}' );
-  }
-
-  return;
+  return $app;
 }
 
 sub _store {
@@ -242,16 +208,8 @@ sub _store {
     $CACHE{ $q->{key} } = { code => $code, data => $data };
   }
 
-  return [
-    $code,
-    [ 'Content-Type'   => 'application/json; charset=utf-8',
-      'Content-length' => length($data),
-      'Connection'     => 'Keep-Alive',
-    ],
-    [$data]
-  ];
-
-  return;
+  $headers->[1] = length($data);
+  return [ $code, $headers, [$data] ];
 }
 
 1;
