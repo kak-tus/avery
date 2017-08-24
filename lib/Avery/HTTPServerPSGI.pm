@@ -110,7 +110,7 @@ sub _process {
         $CACHE{$key}->{code},
         [ 'Content-Type'   => 'application/json; charset=utf-8',
           'Content-length' => length( $CACHE{$key}->{data} ),
-          'Connection'     => 'close',
+          'Connection'     => 'Keep-Alive',
         ],
         [ $CACHE{$key}->{data} ]
       ];
@@ -246,7 +246,7 @@ sub _store {
     $code,
     [ 'Content-Type'   => 'application/json; charset=utf-8',
       'Content-length' => length($data),
-      'Connection'     => 'close',
+      'Connection'     => 'Keep-Alive',
     ],
     [$data]
   ];
