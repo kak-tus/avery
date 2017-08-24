@@ -229,7 +229,7 @@ sub _process {
     }
   }
   else {
-    return  _store( $q, 404, '{}' );
+    return _store( $q, 404, '{}' );
   }
 
   return;
