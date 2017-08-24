@@ -23,8 +23,6 @@ my $JSON = Cpanel::JSON::XS->new->utf8;
 
 my $STAGE = 1;
 
-my %FORKS;
-
 my %STAT;
 my %CACHE;
 
