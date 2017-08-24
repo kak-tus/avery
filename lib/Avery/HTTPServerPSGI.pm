@@ -130,15 +130,15 @@ sub _process {
     my $val = eval { $JSON->decode($data) };
 
     unless ( $val && keys %$val ) {
-      return _400($q);
+      return _store( $q, 400, '{}' );
     }
     my $status = $db->create( $path[1], $val );
 
     if ( $status == 1 ) {
-      return _200( $q, '{}' );
+      return _store( $q, 200, '{}' );
     }
     elsif ( $status == -2 ) {
-      return _400($q);
+      return _store( $q, 400, '{}' );
     }
   }
   elsif ( scalar(@path) == 3
@@ -149,10 +149,10 @@ sub _process {
       my $val = $db->read( $path[1], $path[2] );
 
       unless ($val) {
-        return _404($q);
+        return _store( $q, 404, '{}' );
       }
 
-      return _200( $q, $val );
+      return _store( $q, 200, $val );
     }
     elsif ( $q->{data}{method} eq 'POST' ) {
       $STAGE = 2;
@@ -161,23 +161,23 @@ sub _process {
       my $val = eval { $JSON->decode($data) };
 
       unless ( $val && keys %$val ) {
-        return _400($q);
+        return _store( $q, 400, '{}' );
       }
 
       my $status = $db->update( $path[1], $path[2], $val );
 
       if ( $status == 1 ) {
-        return _200( $q, '{}' );
+        return _store( $q, 200, '{}' );
       }
       elsif ( $status == -1 ) {
-        return _404($q);
+        return _store( $q, 404, '{}' );
       }
       elsif ( $status == -2 ) {
-        return _400($q);
+        return _store( $q, 400, '{}' );
       }
     }
     else {
-      return _404($q);
+      return _store( $q, 404, '{}' );
     }
   }
   elsif ( scalar(@path) == 4
@@ -195,13 +195,13 @@ sub _process {
     my $vals = $db->users_visits( $path[2], %args );
 
     if ( $vals == -1 ) {
-      return _404($q);
+      return _store( $q, 404, '{}' );
     }
     elsif ( $vals == -2 ) {
-      return _400($q);
+      return _store( $q, 400, '{}' );
     }
     else {
-      return _200( $q, $JSON->encode( { visits => $vals } ) );
+      return _store( $q, 200, $JSON->encode( { visits => $vals } ) );
     }
   }
   elsif ( scalar(@path) == 4
@@ -219,38 +219,20 @@ sub _process {
     my $avg = $db->avg( $path[2], %args );
 
     if ( $avg == -1 ) {
-      return _404($q);
+      return _store( $q, 404, '{}' );
     }
     elsif ( $avg == -2 ) {
-      return _400($q);
+      return _store( $q, 400, '{}' );
     }
     else {
-      return _200( $q, qq[{"avg":$avg}] );
+      return _store( $q, 200, qq[{"avg":$avg}] );
     }
   }
   else {
-    return _404($q);
+    return  _store( $q, 404, '{}' );
   }
 
   return;
-}
-
-sub _200 {
-  my ( $q, $data ) = @_;
-
-  return _store( $q, 200, $data );
-}
-
-sub _404 {
-  my $q = shift;
-
-  return _store( $q, 404, '{}' );
-}
-
-sub _400 {
-  my $q = shift;
-
-  return _store( $q, 400, '{}' );
 }
 
 sub _store {
