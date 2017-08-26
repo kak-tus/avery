@@ -12,7 +12,6 @@ RUN \
     libcpanel-json-xs-perl \
     libdatetime-perl \
     libexpat1 \
-    liblist-moreutils-perl \
     liblog-fast-perl \
     libmodule-install-perl \
     libperl-dev \
@@ -31,7 +30,10 @@ RUN \
   && cd / \
   && rm -rf /uwsgi_latest_from_installer \
 
-  && cpanm -n Text::QueryString \
+  && cpanm -n \
+    List::MoreUtils \
+    List::MoreUtils::XS \
+    Text::QueryString \
 
   && apt-get purge -y --auto-remove \
     build-essential \

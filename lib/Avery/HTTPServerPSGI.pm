@@ -8,9 +8,10 @@ use utf8;
 use Avery::Model::DB;
 use Cpanel::JSON::XS;
 use Data::Dumper;
-use Encode qw(decode_utf8);
+use Encode qw( decode_utf8 encode_utf8 );
 use Log::Fast;
 use Text::QueryString;
+use Time::HiRes qw( gettimeofday tv_interval );
 
 my %entities = ( users => 1, visits => 1, locations => 1 );
 
@@ -28,11 +29,51 @@ my %CACHE;
 
 my $tqs = Text::QueryString->new;
 
-my $headers = [
-  'Content-length' => 0,
-  'Content-Type'   => 'application/json; charset=utf-8',
-  'Connection'     => 'Keep-Alive',
+my $ret_404 = [
+  404,
+  [ 'Content-length' => 2,
+    'Content-Type'   => 'application/json; charset=utf-8',
+    'Connection'     => 'Keep-Alive',
+  ],
+  ['{}']
 ];
+
+my $ret_400 = [
+  400,
+  [ 'Content-length' => 2,
+    'Content-Type'   => 'application/json; charset=utf-8',
+    'Connection'     => 'Keep-Alive',
+  ],
+  ['{}']
+];
+
+my $ret_200 = [
+  200,
+  [ 'Content-length' => 0,
+    'Content-Type'   => 'application/json; charset=utf-8',
+    'Connection'     => 'Keep-Alive',
+  ],
+  ['{}']
+];
+
+my $ret_200_ok = [
+  200,
+  [ 'Content-length' => 2,
+    'Content-Type'   => 'application/json; charset=utf-8',
+    'Connection'     => 'Keep-Alive',
+  ],
+  ['{}']
+];
+
+my %vars;
+my $content;
+my $t0;
+my @path;
+my $pth_len;
+my $val;
+my $cache_key;
+my $fh;
+my $req_mtd;
 
 sub app {
   my $self = shift;
@@ -40,172 +81,168 @@ sub app {
   my $app = sub {
     my $req = shift;
 
-    my $qry_str = $req->{QUERY_STRING};
-    my %vars;
-    if ($qry_str) {
-      %vars = $tqs->parse($qry_str);
+    @path = split '/', $req->{PATH_INFO};
+    $pth_len = @path;
 
-      if ( $vars{country} ) {
-        $vars{country} = decode_utf8( $vars{country} );
+    $req_mtd = $req->{REQUEST_METHOD};
+
+    if ( $req_mtd eq 'GET' && $pth_len == 3 ) {
+      if ( $STAGE == 2 ) {
+        $STAGE = 3;
+        undef %CACHE;
+        undef %STAT;
       }
+
+      $val = $db->read( $path[1], $path[2] );
+      unless ($val) {
+        return $ret_404;
+      }
+
+      $val             = encode_utf8($val);
+      $ret_200->[1][1] = length($val);
+      $ret_200->[2][0] = $val;
+      return $ret_200;
     }
+    elsif ( $req_mtd eq 'GET' && $pth_len == 4 ) {
+      if ( $STAGE == 2 ) {
+        $STAGE = 3;
+        undef %CACHE;
+        undef %STAT;
+      }
 
-    my $cont_len = $req->{CONTENT_LENGTH};
-    my $content;
-    if ($cont_len) {
-      my $fh = $req->{'psgi.input'};
-      my $cl = $cont_len;
+      if ( $req->{QUERY_STRING} ) {
+        %vars = $tqs->parse( $req->{QUERY_STRING} );
 
-      $fh->seek( 0, 0 );
-      $fh->read( $content, $cl, 0 );
-      $fh->seek( 0, 0 );
-    }
+        if ( $vars{country} ) {
+          $vars{country} = decode_utf8( $vars{country} );
+        }
+      }
+      else {
+        %vars = ();
+      }
 
-    my $req_mtd = $req->{REQUEST_METHOD};
-
-    if ( $req_mtd ne 'POST' && $STAGE == 2 ) {
-      $STAGE = 3;
-      undef %CACHE;
-      undef %STAT;
-    }
-
-    my @path = split '/', $req->{PATH_INFO};
-    my $pth_len = scalar(@path);
-
-    my $q = {};
-
-    ## кэш только для долгих запросов
-    if ( $req_mtd eq 'GET' && $pth_len == 4 ) {
-      my $key
+      $cache_key
           = $req->{PATH_INFO} . '_'
           . join(
         '_', map { $_ . '_' . $vars{$_} }
             sort keys %vars
           );
 
-      $STAT{$key} //= 0;
-      $STAT{$key}++;
+      $STAT{$cache_key} //= 0;
+      $STAT{$cache_key}++;
 
-      if ( $CACHE{$key} ) {
-        $headers->[1] = length( $CACHE{$key}->{data} );
-        return [ $CACHE{$key}->{code}, $headers, [ $CACHE{$key}->{data} ] ];
+      if ( $CACHE{$cache_key} ) {
+        $ret_200->[1][1] = $CACHE{$cache_key}->[0];
+        $ret_200->[2][0] = $CACHE{$cache_key}->[1];
+        return $ret_200;
       }
 
-      $q->{key} = $key;
-    }
+      if ( $path[1] eq 'users' ) {
+        $val = $db->users_visits( $path[2], \%vars );
 
-    if ( $pth_len == 3
-      && $entities{ $path[1] }
-      && $path[2] eq 'new'
-      && $req_mtd eq 'POST' )
-    {
+        if ( $val eq '-1' ) {
+          return $ret_404;
+        }
+        elsif ( $val eq '-2' ) {
+          return $ret_400;
+        }
+        else {
+          $val             = encode_utf8($val);
+          $ret_200->[1][1] = length($val);
+          $ret_200->[2][0] = $val;
+
+          if ( $STAT{$cache_key} > 1 ) {
+            $CACHE{$cache_key} = [ $ret_200->[1][1], $ret_200->[2][0] ];
+          }
+          return $ret_200;
+        }
+      }
+      elsif ( $path[1] eq 'locations' ) {
+        $val = $db->avg( $path[2], \%vars );
+
+        if ( $val == -1 ) {
+          return $ret_404;
+        }
+        elsif ( $val == -2 ) {
+          return $ret_400;
+        }
+        else {
+          my $enc = qq[{"avg":$val}];
+
+          $ret_200->[1][1] = length($enc);
+          $ret_200->[2][0] = $enc;
+
+          if ( $STAT{$cache_key} > 1 ) {
+            $CACHE{$cache_key} = [ $ret_200->[1][1], $ret_200->[2][0] ];
+          }
+          return $ret_200;
+        }
+      }
+      else {
+        return $ret_404;
+      }
+    }
+    elsif ( $req_mtd eq 'POST' ) {
       $STAGE = 2;
 
-      my $val = eval { $JSON->decode($content) };
+      if ( $req->{CONTENT_LENGTH} ) {
+        $fh = $req->{'psgi.input'};
 
-      unless ( $val && keys %$val ) {
-        return _store( $q, 400, '{}' );
+        $fh->seek( 0, 0 );
+        $fh->read( $content, $req->{CONTENT_LENGTH}, 0 );
+        $fh->seek( 0, 0 );
       }
-      my $status = $db->create( $path[1], $val );
-
-      if ( $status == 1 ) {
-        return _store( $q, 200, '{}' );
+      else {
+        undef $content;
       }
-      elsif ( $status == -2 ) {
-        return _store( $q, 400, '{}' );
-      }
-    }
-    elsif ( $pth_len == 3
-      && $entities{ $path[1] }
-      && $path[2] =~ m/^\d+$/ )
-    {
-      if ( $req_mtd eq 'GET' ) {
-        my $val = $db->read( $path[1], $path[2] );
 
-        unless ($val) {
-          return _store( $q, 404, '{}' );
-        }
-
-        return _store( $q, 200, $val );
-      }
-      elsif ( $req_mtd eq 'POST' ) {
-        $STAGE = 2;
-
-        my $val = eval { $JSON->decode($content) };
+      if ( $pth_len == 3 && $entities{ $path[1] } && $path[2] eq 'new' ) {
+        $val = eval { $JSON->decode( $content // '{}' ) };
 
         unless ( $val && keys %$val ) {
-          return _store( $q, 400, '{}' );
+          return $ret_400;
         }
 
-        my $status = $db->update( $path[1], $path[2], $val );
+        $val = $db->create( $path[1], $val );
 
-        if ( $status == 1 ) {
-          return _store( $q, 200, '{}' );
+        if ( $val == 1 ) {
+          return $ret_200_ok;
         }
-        elsif ( $status == -1 ) {
-          return _store( $q, 404, '{}' );
+        elsif ( $val == -2 ) {
+          return $ret_400;
         }
-        elsif ( $status == -2 ) {
-          return _store( $q, 400, '{}' );
+      }
+      elsif ( $pth_len == 3 && $entities{ $path[1] } && $path[2] =~ m/^\d+$/ )
+      {
+        $val = eval { $JSON->decode( $content // '{}' ) };
+
+        unless ( $val && keys %$val ) {
+          return $ret_400;
+        }
+
+        $val = $db->update( $path[1], $path[2], $val );
+
+        if ( $val == 1 ) {
+          return $ret_200_ok;
+        }
+        elsif ( $val == -1 ) {
+          return $ret_404;
+        }
+        elsif ( $val == -2 ) {
+          return $ret_400;
         }
       }
       else {
-        return _store( $q, 404, '{}' );
-      }
-    }
-    elsif ( $pth_len == 4
-      && $path[1] eq 'users'
-      && $path[2] =~ m/^\d+$/
-      && $path[3] eq 'visits'
-      && $req_mtd eq 'GET' )
-    {
-      my $vals = $db->users_visits( $path[2], \%vars );
-
-      if ( $vals == -1 ) {
-        return _store( $q, 404, '{}' );
-      }
-      elsif ( $vals == -2 ) {
-        return _store( $q, 400, '{}' );
-      }
-      else {
-        return _store( $q, 200, $JSON->encode( { visits => $vals } ) );
-      }
-    }
-    elsif ( $pth_len == 4
-      && $path[1] eq 'locations'
-      && $path[2] =~ m/^\d+$/
-      && $path[3] eq 'avg'
-      && $req_mtd eq 'GET' )
-    {
-      my $avg = $db->avg( $path[2], \%vars );
-
-      if ( $avg == -1 ) {
-        return _store( $q, 404, '{}' );
-      }
-      elsif ( $avg == -2 ) {
-        return _store( $q, 400, '{}' );
-      }
-      else {
-        return _store( $q, 200, qq[{"avg":$avg}] );
+        return $ret_404;
       }
     }
     else {
-      return _store( $q, 404, '{}' );
+      return $ret_404;
     }
+
   };
 
   return $app;
-}
-
-sub _store {
-  my ( $q, $code, $data ) = @_;
-
-  if ( $q->{key} && $STAT{ $q->{key} } > 1 ) {
-    $CACHE{ $q->{key} } = { code => $code, data => $data };
-  }
-
-  $headers->[1] = length($data);
-  return [ $code, $headers, [$data] ];
 }
 
 1;

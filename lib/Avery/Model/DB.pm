@@ -10,9 +10,10 @@ use Cpanel::JSON::XS;
 use Data::Dumper;
 use DateTime;
 use DateTime::TimeZone;
-use Time::HiRes;
+use Time::HiRes qw( gettimeofday tv_interval );
+use List::MoreUtils qw( lower_bound bsearchidx );
 
-my $DAT;
+our $DAT;
 
 my $JSON = Cpanel::JSON::XS->new->utf8;
 
@@ -40,6 +41,50 @@ my %VALIDATION = (
   fromAge    => { min => 0, max => 2147483647, optional => 1 },
   toAge      => { min => 0, max => 2147483647, optional => 1 },
   place      => { len => 2147483647 },
+);
+
+my $t0;
+my @res;
+my ( $sum, $cnt );
+my @keys;
+my @sorted;
+
+my %entities_fields = (
+  users => [
+    qw(
+        gender
+        first_name
+        last_name
+        birth_date
+        email
+        )
+  ],
+  locations => [
+    qw(
+        country
+        distance
+        city
+        place
+        )
+  ],
+  visits => [
+    qw(
+        user
+        location
+        visited_at
+        mark
+        )
+  ],
+);
+
+my %ints = (
+  id         => 1,
+  birth_date => 1,
+  user       => 1,
+  location   => 1,
+  visited_at => 1,
+  mark       => 1,
+  distance   => 1,
 );
 
 sub new {
@@ -92,33 +137,30 @@ sub create {
     }
   }
 
-  $val->{encoded} = $JSON->encode($val);
-  $DAT->{$entity}{ $val->{id} } = $val;
+  foreach ( @{ $entities_fields{$entity} } ) {
+    $DAT->{$entity}{$_}[ $val->{id} ] = $val->{$_};
+  }
 
   if ( $entity eq 'visits' ) {
-    $DAT->{_location_visit_by_user}{ $val->{user} }{ $val->{visited_at} }
-        { $val->{id} } = {
-      location => $DAT->{locations}{ $val->{location} },
-      visit    => $val,
-        };
+    my $idx = lower_bound { $_ <=> $val->{id} }
+    @{ $DAT->{_user}{ $val->{user} } };
 
-    my $years = _years( $DAT->{users}{ $val->{user} }{birth_date} );
+    if ( $idx < 0 ) {
+      push @{ $DAT->{_user}{ $val->{user} } }, $val->{id};
+    }
+    else {
+      splice @{ $DAT->{_user}{ $val->{user} } }, $idx, 0, $val->{id};
+    }
 
-    $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
-        { $DAT->{users}{ $val->{user} }{gender} } ||= [ 0, 0 ];
+    $idx = lower_bound { $_ <=> $val->{id} }
+    @{ $DAT->{_location}{ $val->{location} } };
 
-    $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
-        { $DAT->{users}{ $val->{user} }{gender} }[0]++;
-    $DAT->{_location_avg}{ $val->{location} }{ $val->{visited_at} }{$years}
-        { $DAT->{users}{ $val->{user} }{gender} }[1] += $val->{mark};
-
-    $DAT->{_user_avg}{ $val->{user} }{ $val->{location} }
-        { $val->{visited_at} } ||= [ 0, 0 ];
-
-    $DAT->{_user_avg}{ $val->{user} }{ $val->{location} }
-        { $val->{visited_at} }[0]++;
-    $DAT->{_user_avg}{ $val->{user} }{ $val->{location} }
-        { $val->{visited_at} }[1] += $val->{mark};
+    if ( $idx < 0 ) {
+      push @{ $DAT->{_location}{ $val->{location} } }, $val->{id};
+    }
+    else {
+      splice @{ $DAT->{_location}{ $val->{location} } }, $idx, 0, $val->{id};
+    }
   }
 
   return 1;
@@ -128,115 +170,74 @@ sub read {
   my $self = shift;
   my ( $entity, $id ) = @_;
 
-  return unless $DAT->{$entity}{$id};
-  return $DAT->{$entity}{$id}{encoded};
+  return if $id eq 'bad';
+  return unless $DAT->{$entity}{ $entities_fields{$entity}[0] }[$id];
+
+  return '{' . join(
+    ',',
+    map {
+            qq{"id":$id,} . '"'
+          . $_ . '":'
+          . ( $ints{$_} ? '' : '"' )
+          . $DAT->{$entity}{$_}[$id]
+          . ( $ints{$_} ? '' : '"' )
+    } @{ $entities_fields{$entity} }
+  ) . '}';
 }
 
 sub update {
   my $self = shift;
   my ( $entity, $id, $val ) = @_;
 
-  my $new = $DAT->{$entity}{$id};
-  return -1 unless $new;
-
-  foreach my $key ( keys %$val ) {
-    if ( $VALIDATION{$key} ) {
-      return -2 if _validate( 'update', $key, $val->{$key} ) == -2;
+  foreach ( keys %$val ) {
+    if ( $VALIDATION{$_} ) {
+      return -2 if _validate( 'update', $_, $val->{$_} ) == -2;
     }
   }
 
-  my $orig = clone($new);
+  return -1 unless $DAT->{$entity}{ $entities_fields{$entity}[0] }[$id];
 
-  foreach my $key ( keys %$val ) {
-    $new->{$key} = $val->{$key};
-  }
-
-  delete $new->{encoded};
-  $new->{encoded} = $JSON->encode($new);
-
-  if (
-    $entity eq 'users'
-    && ( $new->{gender} ne $orig->{gender}
-      || $new->{birth_date} ne $orig->{birth_date} )
-      )
+  if ( $entity eq 'visits'
+    && $val->{user}
+    && $val->{user} != $DAT->{visits}{user}[$id] )
   {
-    my $orig_years = _years( $orig->{birth_date} );
-    my $years      = _years( $new->{birth_date} );
+    my $idx = bsearchidx { $_ <=> $id }
+    @{ $DAT->{_user}{ $DAT->{visits}{user}[$id] } };
 
-    foreach my $loc ( keys %{ $DAT->{_user_avg}{$id} } ) {
-      foreach my $at ( keys %{ $DAT->{_user_avg}{$id}{$loc} } ) {
-        my $orig_avg = $DAT->{_user_avg}{$id}{$loc}{$at};
+    splice @{ $DAT->{_user}{ $DAT->{visits}{user}[$id] } }, $idx, 1;
 
-        $DAT->{_location_avg}{$loc}{$at}{$orig_years}{ $orig->{gender} }[0]
-            -= $orig_avg->[0];
-        $DAT->{_location_avg}{$loc}{$at}{$orig_years}{ $orig->{gender} }[1]
-            -= $orig_avg->[1];
+    $idx = lower_bound { $_ <=> $id } @{ $DAT->{_user}{ $val->{user} } };
 
-        $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }
-            ||= [ 0, 0 ];
-
-        $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }[0]
-            += $orig_avg->[0];
-        $DAT->{_location_avg}{$loc}{$at}{$years}{ $new->{gender} }[1]
-            += $orig_avg->[1];
-      }
+    if ( $idx < 0 ) {
+      push @{ $DAT->{_user}{ $val->{user} } }, $id;
+    }
+    else {
+      splice @{ $DAT->{_user}{ $val->{user} } }, $idx, 0, $id;
     }
   }
 
-  if (
-    $entity eq 'visits'
-    && ( $new->{location} ne $orig->{location}
-      || $new->{visited_at} ne $orig->{visited_at}
-      || $new->{user} ne $orig->{user}
-      || $new->{mark} ne $orig->{mark} )
-      )
+  if ( $entity eq 'visits'
+    && $val->{location}
+    && $val->{location} != $DAT->{visits}{location}[$id] )
   {
-    my $orig_years = _years( $DAT->{users}{ $orig->{user} }{birth_date} );
-    my $years      = _years( $DAT->{users}{ $new->{user} }{birth_date} );
+    my $idx = bsearchidx { $_ <=> $id }
+    @{ $DAT->{_location}{ $DAT->{visits}{location}[$id] } };
 
-    $DAT->{_location_avg}{ $orig->{location} }{ $orig->{visited_at} }
-        {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }[0]--;
-    $DAT->{_location_avg}{ $orig->{location} }{ $orig->{visited_at} }
-        {$orig_years}{ $DAT->{users}{ $orig->{user} }{gender} }[1]
-        -= $orig->{mark};
+    splice @{ $DAT->{_location}{ $DAT->{visits}{location}[$id] } }, $idx, 1;
 
-    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
-        { $DAT->{users}{ $new->{user} }{gender} } ||= [ 0, 0 ];
+    $idx = lower_bound { $_ <=> $id }
+    @{ $DAT->{_location}{ $val->{location} } };
 
-    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
-        { $DAT->{users}{ $new->{user} }{gender} }[0]++;
-    $DAT->{_location_avg}{ $new->{location} }{ $new->{visited_at} }{$years}
-        { $DAT->{users}{ $new->{user} }{gender} }[1] += $new->{mark};
-
-    $DAT->{_user_avg}{ $orig->{user} }{ $orig->{location} }
-        { $orig->{visited_at} }[0]--;
-    $DAT->{_user_avg}{ $orig->{user} }{ $orig->{location} }
-        { $orig->{visited_at} }[1] -= $orig->{mark};
-
-    $DAT->{_user_avg}{ $new->{user} }{ $new->{location} }
-        { $new->{visited_at} } ||= [ 0, 0 ];
-
-    $DAT->{_user_avg}{ $new->{user} }{ $new->{location} }
-        { $new->{visited_at} }[0]++;
-    $DAT->{_user_avg}{ $new->{user} }{ $new->{location} }
-        { $new->{visited_at} }[1] += $new->{mark};
+    if ( $idx < 0 ) {
+      push @{ $DAT->{_location}{ $val->{location} } }, $id;
+    }
+    else {
+      splice @{ $DAT->{_location}{ $val->{location} } }, $idx, 0, $id;
+    }
   }
 
-  if (
-    $entity eq 'visits'
-    && ( $new->{user} != $orig->{user}
-      || $new->{visited_at} != $orig->{visited_at}
-      || $new->{location} != $orig->{location} )
-      )
-  {
-    delete $DAT->{_location_visit_by_user}{ $orig->{user} }
-        { $orig->{visited_at} }{$id};
-
-    $DAT->{_location_visit_by_user}{ $new->{user} }{ $new->{visited_at} }{$id}
-        = {
-      location => $DAT->{locations}{ $new->{location} },
-      visit    => $new,
-        };
+  foreach ( keys %$val ) {
+    $DAT->{$entity}{$_}[$id] = $val->{$_};
   }
 
   return 1;
@@ -274,94 +275,94 @@ sub _validate {
 sub users_visits {
   my ( $self, $id, $params ) = @_;
 
-  foreach my $key ( keys %$params ) {
-    next unless $VALIDATION{$key};
-    return -2 if _validate( 'users_visits', $key, $params->{$key} ) == -2;
+  foreach ( keys %$params ) {
+    next unless $VALIDATION{$_};
+    return -2 if _validate( 'users_visits', $_, $params->{$_} ) == -2;
   }
 
-  return -1 unless $DAT->{users}{$id};
+  return -1 unless $DAT->{users}{gender}[$id];
+
+  @res = ();
 
   my $fd = $params->{fromDate};
   my $td = $params->{toDate};
   my $cn = $params->{country};
   my $ds = $params->{toDistance};
 
-  my @keys;
-  if ( $fd || $td ) {
-    $fd //= 0;
-    $td //= 2147483647;
-    @keys = sort { $a <=> $b }
-        grep { $_ > $fd && $_ < $td }
-        keys %{ $DAT->{_location_visit_by_user}{$id} };
+  # use Cpanel::JSON::XS;
+  # my $JSON = Cpanel::JSON::XS->new->utf8;
+  # $t0=[gettimeofday];
+  # for(1..100){
+
+  foreach ( @{ $DAT->{_user}{$id} } ) {
+    next if $fd && $DAT->{visits}{visited_at}[$_] <= $fd;
+    next if $td && $DAT->{visits}{visited_at}[$_] >= $td;
+
+    next
+        if $cn
+        && $DAT->{locations}{country}[ $DAT->{visits}{location}[$_] ] ne $cn;
+    next
+        if $ds
+        && $DAT->{locations}{distance}[ $DAT->{visits}{location}[$_] ] >= $ds;
+
+    my %visit = (
+      visited_at => $DAT->{visits}{visited_at}[$_],
+      enc        => '{"mark":'
+          . $DAT->{visits}{mark}[$_]
+          . ',"visited_at":'
+          . $DAT->{visits}{visited_at}[$_]
+          . ',"place":"'
+          . $DAT->{locations}{place}[ $DAT->{visits}{location}[$_] ] . '"}',
+    );
+    push @res, \%visit;
   }
-  else {
-    @keys = sort { $a <=> $b } keys %{ $DAT->{_location_visit_by_user}{$id} };
-  }
 
-  my @res;
+  @sorted
+      = map { $_->{enc} } sort { $a->{visited_at} <=> $b->{visited_at} } @res;
 
-  foreach my $key (@keys) {
-    foreach my $val ( values %{ $DAT->{_location_visit_by_user}{$id}{$key} } )
-    {
-      next if defined $cn && $val->{location}{country} ne $cn;
-      next if defined $ds && $val->{location}{distance} >= $ds;
+  # }
+  # say tv_interval($t0)*1000000;
 
-      my %visit = (
-        mark       => $val->{visit}{mark},
-        visited_at => $val->{visit}{visited_at},
-        place      => $val->{location}{place},
-      );
-      push @res, \%visit;
-    }
-  }
-
-  return \@res;
+  return '{"visits":[' . join( ',', @sorted ) . ']}';
 }
 
 sub avg {
   my ( $self, $id, $params ) = @_;
 
-  foreach my $key ( keys %$params ) {
-    next unless $VALIDATION{$key};
-    return -2 if _validate( 'avg', $key, $params->{$key} ) == -2;
+  foreach ( keys %$params ) {
+    next unless $VALIDATION{$_};
+    return -2 if _validate( 'avg', $_, $params->{$_} ) == -2;
   }
 
-  return -1 unless $DAT->{locations}{$id};
+  return -1 unless $DAT->{locations}{country}[$id];
 
-  my ( $sum, $cnt ) = ( 0, 0 );
+  ( $sum, $cnt ) = ( 0, 0 );
 
   my $fd = $params->{fromDate};
   my $td = $params->{toDate};
   my $fa = $params->{fromAge};
   my $ta = $params->{toAge};
+  my $gn = $params->{gender};
 
-  my @keys;
-  if ( $fd || $td ) {
-    $fd //= 0;
-    $td //= 2147483647;
-    @keys = grep { $_ > $fd && $_ < $td }
-        keys %{ $DAT->{_location_avg}{$id} };
-  }
-  else {
-    @keys = keys %{ $DAT->{_location_avg}{$id} };
-  }
+  foreach ( @{ $DAT->{_location}{$id} } ) {
+    next if $fd && $DAT->{visits}{visited_at}[$_] <= $fd;
+    next if $td && $DAT->{visits}{visited_at}[$_] >= $td;
 
-  my @genders = qw( m f );
-  @genders = ( $params->{gender} ) if $params->{gender};
+    next
+        if $gn
+        && $DAT->{users}{gender}[ $DAT->{visits}{user}[$_] ] ne $gn;
 
-  foreach my $key (@keys) {
-    foreach my $age ( keys %{ $DAT->{_location_avg}{$id}{$key} } ) {
-      {
-        next if defined $fa && $age < $fa;
-        next if defined $ta && $age >= $ta;
+    next
+        if $fa
+        && _years( $DAT->{users}{birth_date}[ $DAT->{visits}{user}[$_] ] )
+        < $fa;
+    next
+        if $ta
+        && _years( $DAT->{users}{birth_date}[ $DAT->{visits}{user}[$_] ] )
+        >= $ta;
 
-        foreach my $gender (@genders) {
-          next unless $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[0];
-          $cnt += $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[0];
-          $sum += $DAT->{_location_avg}{$id}{$key}{$age}{$gender}[1];
-        }
-      }
-    }
+    $cnt++;
+    $sum += $DAT->{visits}{mark}[$_];
   }
 
   return 0 unless $cnt;
