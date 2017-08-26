@@ -170,7 +170,7 @@ sub read {
   my $self = shift;
   my ( $entity, $id ) = @_;
 
-  return if $id eq 'bad';
+  return if $id !~ /^\d+$/;
   return unless $DAT->{$entity}{ $entities_fields{$entity}[0] }[$id];
 
   return '{' . join(
@@ -289,8 +289,6 @@ sub users_visits {
   my $cn = $params->{country};
   my $ds = $params->{toDistance};
 
-  # use Cpanel::JSON::XS;
-  # my $JSON = Cpanel::JSON::XS->new->utf8;
   # $t0=[gettimeofday];
   # for(1..100){
 
