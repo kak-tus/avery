@@ -8,9 +8,11 @@ RUN \
     ca-certificates \
     cpanminus \
     curl \
+    git \
     libclone-perl \
     libcpanel-json-xs-perl \
     libdatetime-perl \
+    libev-perl \
     libexpat1 \
     liblog-fast-perl \
     libmodule-install-perl \
@@ -34,12 +36,14 @@ RUN \
     List::MoreUtils \
     List::MoreUtils::XS \
     Text::QueryString \
+    https://github.com/Mons/AnyEvent-HTTP-Server-II.git \
 
   && apt-get purge -y --auto-remove \
     build-essential \
     ca-certificates \
     cpanminus \
     curl \
+    git \
     libperl-dev \
     python \
     python-dev \
