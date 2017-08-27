@@ -33,10 +33,11 @@ RUN \
   && rm -rf /uwsgi_latest_from_installer \
 
   && cpanm -n \
+    https://github.com/Mons/AnyEvent-HTTP-Server-II.git \
     List::MoreUtils \
     List::MoreUtils::XS \
     Text::QueryString \
-    https://github.com/Mons/AnyEvent-HTTP-Server-II.git \
+    Tie::Array::PackedC \
 
   && apt-get purge -y --auto-remove \
     build-essential \
