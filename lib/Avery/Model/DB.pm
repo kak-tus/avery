@@ -232,7 +232,8 @@ sub read {
           . (
         defined $maps->{$_}{idx}
         ? $maps->{$_}{revmap}{ $DAT->{$entity}{$_}[$id] }
-        : $DAT->{$entity}{$_}[$id] )
+        : $DAT->{$entity}{$_}[$id]
+          )
           . ( $ints{$_} ? '' : '"' )
     } @{ $entities_fields{$entity} }
   ) . '}';
@@ -248,7 +249,8 @@ sub update {
     }
   }
 
-  return -1 unless $DAT->{$entity}{ $entities_fields{$entity}[0] }[$id];
+  return -1
+      unless defined $DAT->{$entity}{ $entities_fields{$entity}[0] }[$id];
 
   if ( $entity eq 'visits'
     && $val->{user}
@@ -300,6 +302,17 @@ sub update {
   }
 
   foreach ( keys %$val ) {
+    if ( defined $maps->{$_}{idx} ) {
+      my $idx = $maps->{$_}{map}{ $val->{$_} };
+      unless ( defined $idx ) {
+        $idx                           = $maps->{$_}{idx};
+        $maps->{$_}{map}{ $val->{$_} } = $idx;
+        $maps->{$_}{revmap}{$idx}      = $val->{$_};
+        $maps->{$_}{idx}++;
+      }
+      $val->{$_} = $idx;
+    }
+
     $DAT->{$entity}{$_}[$id] = $val->{$_};
   }
 
