@@ -6,6 +6,6 @@ cd /tmp/unzip
 unzip data.zip > /dev/null
 cd /
 
-top -b -d 30 &
+top -b -d 30 | fgrep perl &
 
 /usr/local/bin/avery_http_server2.pl
