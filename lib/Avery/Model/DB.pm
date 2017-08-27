@@ -448,7 +448,7 @@ sub _years {
 
   return $DAT->{_years}{$birth_date} if $DAT->{_years}{$birth_date};
 
-  my $dt = DateTime->from_epoch( epoch => $birth_date, time_zone => $TZ, );
+  my $dt = DateTime->from_epoch( epoch => $birth_date, time_zone => $TZ );
   $DAT->{_years}{$birth_date}
       = $TODAY->clone->subtract_datetime($dt)->years();
 

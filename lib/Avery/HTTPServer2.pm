@@ -29,7 +29,6 @@ my $JSON = Cpanel::JSON::XS->new->utf8;
 
 my $STAGE = 1;
 
-my %STAT;
 my %CACHE;
 
 my $headers = {
@@ -48,7 +47,7 @@ my $pos;
 
 open my $fl, '/tmp/data/options.txt';
 my @options = <$fl>;
-my $mode    = $options[1];
+my $mode    = chomp $options[1];
 close $fl;
 
 my %pipes;
@@ -88,10 +87,14 @@ sub run {
 
   $httpd->listen;
 
-  %pipes
-      = ( 0 => IO::Pipe->new(), 1 => IO::Pipe->new(), 2 => IO::Pipe->new() );
+  %pipes = (
+    0 => IO::Pipe->new(),
+    1 => IO::Pipe->new(),
+    2 => IO::Pipe->new(),
+    3 => IO::Pipe->new(),
+  );
 
-  for ( 1 .. 2 ) {
+  for ( 1 .. 3 ) {
     my $pid = fork();
     if ($pid) {
       $process = 0;
@@ -143,8 +146,6 @@ sub process {
   if ( $req_mtd eq 'GET' && $pth_len == 3 ) {
     if ( $STAGE == 2 ) {
       $STAGE = 3;
-      undef %CACHE;
-      undef %STAT;
     }
 
     $val = $db->read( $path[1], $path[2] );
@@ -160,23 +161,6 @@ sub process {
   elsif ( $req_mtd eq 'GET' && $pth_len == 4 ) {
     if ( $STAGE == 2 ) {
       $STAGE = 3;
-      undef %CACHE;
-      undef %STAT;
-    }
-
-    # if ( $STAGE == 3 ) {
-    #   $req->reply( 200, '{}', headers => $headers );
-    #   return;
-    # }
-
-    $cache_key = $req->uri;
-
-    $STAT{$cache_key} //= 0;
-    $STAT{$cache_key}++;
-
-    if ( $CACHE{$cache_key} ) {
-      $req->reply( 200, $CACHE{$cache_key}, headers => $headers );
-      return;
     }
 
     if ( $path[1] eq 'users' ) {
@@ -189,10 +173,6 @@ sub process {
         $req->reply( 400, '{}', headers => $headers );
       }
       else {
-        if ( $STAT{$cache_key} > 1 ) {
-          $CACHE{$cache_key} = $val;
-        }
-
         $req->reply( 200, $val, headers => $headers );
       }
     }
@@ -207,10 +187,6 @@ sub process {
       }
       else {
         my $enc = qq[{"avg":$val}];
-
-        if ( $STAT{$cache_key} > 1 ) {
-          $CACHE{$cache_key} = $enc;
-        }
 
         $req->reply( 200, $enc, headers => $headers );
       }
@@ -291,9 +267,15 @@ sub _from_fork {
   return unless scalar @dec;
 
   for ( my $i = 0; $i < scalar(@dec); $i++ ) {
+    next unless $dec[$i];
+
     my @dat = split ';', $dec[$i];
 
-    $val = $JSON->decode( $dat[3] );
+    $val = eval { $JSON->decode( $dat[3] ) };
+    unless ( $val && keys %$val ) {
+      $logger->INFO( 'Unsuccess decode: ', $dec[$i] );
+      next;
+    }
 
     if ( $dat[0] eq 'u' ) {
       $db->update( $dat[1], $dat[2], $val );
