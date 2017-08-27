@@ -27,9 +27,7 @@ my $db = Avery::Model::DB->new( logger => $logger );
 
 my $JSON = Cpanel::JSON::XS->new->utf8;
 
-my $STAGE = 1;
-
-my %CACHE;
+my $CACHE;
 
 my $headers = {
   'Content-Type' => 'application/json; charset=utf-8',
@@ -54,11 +52,9 @@ my %pipes;
 my $process;
 my $hdl;
 
+my $FORKS = 4;
+
 sub run {
-  my $started = time;
-
-  $db->load();
-
   $httpd = AnyEvent::HTTP::Server->new(
     host => '0.0.0.0',
     port => 80,
@@ -87,17 +83,15 @@ sub run {
 
   $httpd->listen;
 
-  %pipes = (
-    0 => IO::Pipe->new(),
-    1 => IO::Pipe->new(),
-    2 => IO::Pipe->new(),
-    3 => IO::Pipe->new(),
-  );
+  for ( 0 .. $FORKS ) {
+    $pipes{$_} = IO::Pipe->new();
+  }
 
-  for ( 1 .. 3 ) {
+  $process = 0;
+
+  for ( 1 .. $FORKS ) {
     my $pid = fork();
     if ($pid) {
-      $process = 0;
       next;
     }
     else {
@@ -106,10 +100,10 @@ sub run {
     }
   }
 
-  foreach my $key ( keys %pipes ) {
-    my $pipe = $pipes{$key};
+  for ( 0 .. $FORKS ) {
+    my $pipe = $pipes{$_};
 
-    if ( $key == $process ) {
+    if ( $_ == $process ) {
       $pipe->reader();
 
       $hdl = AnyEvent::Handle->new(
@@ -127,7 +121,10 @@ sub run {
     }
   }
 
-  $httpd->accept;
+  unless ( $process == 0 ) {
+    $httpd->accept;
+    $db->load();
+  }
 
   EV::loop;
 }
@@ -144,10 +141,6 @@ sub process {
   $req_mtd = $req->method;
 
   if ( $req_mtd eq 'GET' && $pth_len == 3 ) {
-    if ( $STAGE == 2 ) {
-      $STAGE = 3;
-    }
-
     $val = $db->read( $path[1], $path[2] );
     unless ($val) {
       $req->reply( 404, '{}', headers => $headers );
@@ -159,10 +152,6 @@ sub process {
     return;
   }
   elsif ( $req_mtd eq 'GET' && $pth_len == 4 ) {
-    if ( $STAGE == 2 ) {
-      $STAGE = 3;
-    }
-
     if ( $path[1] eq 'users' ) {
       $val = $db->users_visits( $path[2], $req->params );
 
@@ -196,8 +185,6 @@ sub process {
     }
   }
   elsif ( $req_mtd eq 'POST' ) {
-    $STAGE = 2;
-
     if ( $pth_len == 3 && $entities{ $path[1] } && $path[2] eq 'new' ) {
       $val = eval { $JSON->decode( $content // '{}' ) };
 
@@ -206,7 +193,7 @@ sub process {
         return;
       }
 
-      foreach ( keys %pipes ) {
+      for ( 1 .. $FORKS ) {
         my $pipe = $pipes{$_};
         next if $process == $_;
         my $line = 'c;' . $path[1] . ';;' . $content;
@@ -230,7 +217,7 @@ sub process {
         return;
       }
 
-      foreach ( keys %pipes ) {
+      for ( 1 .. $FORKS ) {
         my $pipe = $pipes{$_};
         next if $process == $_;
         my $line = 'u;' . $path[1] . ';' . $path[2] . ';' . $content;

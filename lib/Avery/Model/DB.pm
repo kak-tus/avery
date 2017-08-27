@@ -17,7 +17,7 @@ use Tie::Array::PackedC Distance => 'S';
 use Tie::Array::PackedC FName    => 'C';
 use Tie::Array::PackedC Gender   => 'C';
 use Tie::Array::PackedC LName    => 'S';
-use Tie::Array::PackedC Mark     => 'c';
+use Tie::Array::PackedC Mark     => 'C';
 use Tie::Array::PackedC Place    => 'C';
 use Tie::Array::PackedC qw(packed_array);
 use Time::HiRes qw( gettimeofday tv_interval );
