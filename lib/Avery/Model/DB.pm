@@ -10,8 +10,17 @@ use Cpanel::JSON::XS;
 use Data::Dumper;
 use DateTime;
 use DateTime::TimeZone;
-use Time::HiRes qw( gettimeofday tv_interval );
 use List::MoreUtils qw( lower_bound bsearchidx );
+use Tie::Array::PackedC City     => 'S';
+use Tie::Array::PackedC Country  => 'C';
+use Tie::Array::PackedC Distance => 'S';
+use Tie::Array::PackedC FName    => 'C';
+use Tie::Array::PackedC Gender   => 'C';
+use Tie::Array::PackedC LName    => 'S';
+use Tie::Array::PackedC Mark     => 'c';
+use Tie::Array::PackedC Place    => 'C';
+use Tie::Array::PackedC qw(packed_array);
+use Time::HiRes qw( gettimeofday tv_interval );
 
 our $DAT;
 
@@ -87,6 +96,30 @@ my %ints = (
   distance   => 1,
 );
 
+my $maps = {
+  country    => { idx => 0, map => {} },
+  city       => { idx => 0, map => {} },
+  place      => { idx => 0, map => {} },
+  gender     => { idx => 0, map => {} },
+  first_name => { idx => 0, map => {} },
+  last_name  => { idx => 0, map => {} },
+};
+
+$DAT->{users}{gender}     = Tie::Array::PackedC::Gender::packed_array(1);
+$DAT->{users}{first_name} = Tie::Array::PackedC::FName::packed_array(1);
+$DAT->{users}{last_name}  = Tie::Array::PackedC::LName::packed_array(1);
+$DAT->{users}{birth_date} = packed_array(1);
+
+$DAT->{locations}{country}  = Tie::Array::PackedC::Country::packed_array(1);
+$DAT->{locations}{distance} = Tie::Array::PackedC::Distance::packed_array(1);
+$DAT->{locations}{city}     = Tie::Array::PackedC::City::packed_array(1);
+$DAT->{locations}{place}    = Tie::Array::PackedC::Place::packed_array(1);
+
+$DAT->{visits}{user}       = packed_array(1);
+$DAT->{visits}{location}   = packed_array(1);
+$DAT->{visits}{visited_at} = packed_array(1);
+$DAT->{visits}{mark}       = Tie::Array::PackedC::Mark::packed_array(1);
+
 sub new {
   my $parent = shift;
   my %params = @_;
@@ -138,29 +171,46 @@ sub create {
   }
 
   foreach ( @{ $entities_fields{$entity} } ) {
+    if ( defined $maps->{$_}{idx} ) {
+      my $idx = $maps->{$_}{map}{ $val->{$_} };
+      unless ( defined $idx ) {
+        $idx                           = $maps->{$_}{idx};
+        $maps->{$_}{map}{ $val->{$_} } = $idx;
+        $maps->{$_}{revmap}{$idx}      = $val->{$_};
+        $maps->{$_}{idx}++;
+      }
+      $val->{$_} = $idx;
+    }
+
     $DAT->{$entity}{$_}[ $val->{id} ] = $val->{$_};
   }
 
   if ( $entity eq 'visits' ) {
-    my $idx = lower_bound { $_ <=> $val->{id} }
-    @{ $DAT->{_user}{ $val->{user} } };
+    my @list = unpack 'l!*', ( $DAT->{_user}[ $val->{user} ] // '' );
+
+    my $idx = lower_bound { $_ <=> $val->{id} } @list;
 
     if ( $idx < 0 ) {
-      push @{ $DAT->{_user}{ $val->{user} } }, $val->{id};
+      push @list, $val->{id};
     }
     else {
-      splice @{ $DAT->{_user}{ $val->{user} } }, $idx, 0, $val->{id};
+      splice @list, $idx, 0, $val->{id};
     }
 
-    $idx = lower_bound { $_ <=> $val->{id} }
-    @{ $DAT->{_location}{ $val->{location} } };
+    $DAT->{_user}[ $val->{user} ] = pack 'l!*', @list;
+
+    @list = unpack 'l!*', ( $DAT->{_location}[ $val->{location} ] // '' );
+
+    $idx = lower_bound { $_ <=> $val->{id} } @list;
 
     if ( $idx < 0 ) {
-      push @{ $DAT->{_location}{ $val->{location} } }, $val->{id};
+      push @list, $val->{id};
     }
     else {
-      splice @{ $DAT->{_location}{ $val->{location} } }, $idx, 0, $val->{id};
+      splice @list, $idx, 0, $val->{id};
     }
+
+    $DAT->{_location}[ $val->{location} ] = pack 'l!*', @list;
   }
 
   return 1;
@@ -171,15 +221,18 @@ sub read {
   my ( $entity, $id ) = @_;
 
   return if $id !~ /^\d+$/;
-  return unless $DAT->{$entity}{ $entities_fields{$entity}[0] }[$id];
+  return unless defined $DAT->{$entity}{ $entities_fields{$entity}[0] }[$id];
 
-  return '{' . join(
+  return '{' . qq{"id":$id,} . join(
     ',',
     map {
-            qq{"id":$id,} . '"'
+            '"'
           . $_ . '":'
           . ( $ints{$_} ? '' : '"' )
-          . $DAT->{$entity}{$_}[$id]
+          . (
+        defined $maps->{$_}{idx}
+        ? $maps->{$_}{revmap}{ $DAT->{$entity}{$_}[$id] }
+        : $DAT->{$entity}{$_}[$id] )
           . ( $ints{$_} ? '' : '"' )
     } @{ $entities_fields{$entity} }
   ) . '}';
@@ -201,39 +254,49 @@ sub update {
     && $val->{user}
     && $val->{user} != $DAT->{visits}{user}[$id] )
   {
-    my $idx = bsearchidx { $_ <=> $id }
-    @{ $DAT->{_user}{ $DAT->{visits}{user}[$id] } };
+    my @list = unpack 'l!*',
+        ( $DAT->{_user}[ $DAT->{visits}{user}[$id] ] // '' );
 
-    splice @{ $DAT->{_user}{ $DAT->{visits}{user}[$id] } }, $idx, 1;
+    my $idx = bsearchidx { $_ <=> $id } @list;
+    splice @list, $idx, 1;
+    $DAT->{_user}[ $DAT->{visits}{user}[$id] ] = pack 'l!*', @list;
 
-    $idx = lower_bound { $_ <=> $id } @{ $DAT->{_user}{ $val->{user} } };
+    @list = unpack 'l!*', ( $DAT->{_user}[ $val->{user} ] // '' );
+
+    $idx = lower_bound { $_ <=> $id } @list;
 
     if ( $idx < 0 ) {
-      push @{ $DAT->{_user}{ $val->{user} } }, $id;
+      push @list, $id;
     }
     else {
-      splice @{ $DAT->{_user}{ $val->{user} } }, $idx, 0, $id;
+      splice @list, $idx, 0, $id;
     }
+
+    $DAT->{_user}[ $val->{user} ] = pack 'l!*', @list;
   }
 
   if ( $entity eq 'visits'
     && $val->{location}
     && $val->{location} != $DAT->{visits}{location}[$id] )
   {
-    my $idx = bsearchidx { $_ <=> $id }
-    @{ $DAT->{_location}{ $DAT->{visits}{location}[$id] } };
+    my @list = unpack 'l!*',
+        ( $DAT->{_location}[ $DAT->{visits}{location}[$id] ] // '' );
 
-    splice @{ $DAT->{_location}{ $DAT->{visits}{location}[$id] } }, $idx, 1;
+    my $idx = bsearchidx { $_ <=> $id } @list;
+    splice @list, $idx, 1;
+    $DAT->{_location}[ $DAT->{visits}{location}[$id] ] = pack 'l!*', @list;
 
-    $idx = lower_bound { $_ <=> $id }
-    @{ $DAT->{_location}{ $val->{location} } };
+    @list = unpack 'l!*', ( $DAT->{_location}[ $val->{location} ] // '' );
+    $idx = lower_bound { $_ <=> $id } @list;
 
     if ( $idx < 0 ) {
-      push @{ $DAT->{_location}{ $val->{location} } }, $id;
+      push @list, $id;
     }
     else {
-      splice @{ $DAT->{_location}{ $val->{location} } }, $idx, 0, $id;
+      splice @list, $idx, 0, $id;
     }
+
+    $DAT->{_location}[ $val->{location} ] = pack 'l!*', @list;
   }
 
   foreach ( keys %$val ) {
@@ -280,7 +343,7 @@ sub users_visits {
     return -2 if _validate( 'users_visits', $_, $params->{$_} ) == -2;
   }
 
-  return -1 unless $DAT->{users}{gender}[$id];
+  return -1 unless defined $DAT->{users}{gender}[$id];
 
   @res = ();
 
@@ -289,16 +352,14 @@ sub users_visits {
   my $cn = $params->{country};
   my $ds = $params->{toDistance};
 
-  # $t0=[gettimeofday];
-  # for(1..100){
-
-  foreach ( @{ $DAT->{_user}{$id} } ) {
+  foreach ( unpack 'l!*', ( $DAT->{_user}[$id] // '' ) ) {
     next if $fd && $DAT->{visits}{visited_at}[$_] <= $fd;
     next if $td && $DAT->{visits}{visited_at}[$_] >= $td;
 
     next
         if $cn
-        && $DAT->{locations}{country}[ $DAT->{visits}{location}[$_] ] ne $cn;
+        && $maps->{country}{revmap}
+        { $DAT->{locations}{country}[ $DAT->{visits}{location}[$_] ] } ne $cn;
     next
         if $ds
         && $DAT->{locations}{distance}[ $DAT->{visits}{location}[$_] ] >= $ds;
@@ -310,16 +371,14 @@ sub users_visits {
           . ',"visited_at":'
           . $DAT->{visits}{visited_at}[$_]
           . ',"place":"'
-          . $DAT->{locations}{place}[ $DAT->{visits}{location}[$_] ] . '"}',
+          . $maps->{place}{revmap}
+          { $DAT->{locations}{place}[ $DAT->{visits}{location}[$_] ] } . '"}',
     );
     push @res, \%visit;
   }
 
   @sorted
       = map { $_->{enc} } sort { $a->{visited_at} <=> $b->{visited_at} } @res;
-
-  # }
-  # say tv_interval($t0)*1000000;
 
   return '{"visits":[' . join( ',', @sorted ) . ']}';
 }
@@ -332,7 +391,7 @@ sub avg {
     return -2 if _validate( 'avg', $_, $params->{$_} ) == -2;
   }
 
-  return -1 unless $DAT->{locations}{country}[$id];
+  return -1 unless defined $DAT->{locations}{country}[$id];
 
   ( $sum, $cnt ) = ( 0, 0 );
 
@@ -342,13 +401,14 @@ sub avg {
   my $ta = $params->{toAge};
   my $gn = $params->{gender};
 
-  foreach ( @{ $DAT->{_location}{$id} } ) {
+  foreach ( unpack 'l!*', ( $DAT->{_location}[$id] // '' ) ) {
     next if $fd && $DAT->{visits}{visited_at}[$_] <= $fd;
     next if $td && $DAT->{visits}{visited_at}[$_] >= $td;
 
     next
         if $gn
-        && $DAT->{users}{gender}[ $DAT->{visits}{user}[$_] ] ne $gn;
+        && $maps->{gender}{revmap}
+        { $DAT->{users}{gender}[ $DAT->{visits}{user}[$_] ] } ne $gn;
 
     next
         if $fa
