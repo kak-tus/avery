@@ -6,12 +6,14 @@ use v5.10;
 use utf8;
 
 use AnyEvent;
+use AnyEvent::Handle;
 use AnyEvent::HTTP::Server;
 use Avery::Model::DB;
 use Cpanel::JSON::XS;
 use Data::Dumper;
 use Encode qw( decode_utf8 encode_utf8 );
 use EV;
+use IO::Pipe;
 use Log::Fast;
 use Time::HiRes qw( gettimeofday tv_interval usleep );
 
@@ -22,7 +24,6 @@ my %entities = ( users => 1, visits => 1, locations => 1 );
 my $logger = Log::Fast->new;
 
 my $db = Avery::Model::DB->new( logger => $logger );
-$db->load();
 
 my $JSON = Cpanel::JSON::XS->new->utf8;
 
@@ -45,7 +46,20 @@ my $fh;
 my $req_mtd;
 my $pos;
 
+open my $fl, '/tmp/data/options.txt';
+my @options = <$fl>;
+my $mode    = $options[1];
+close $fl;
+
+my %pipes;
+my $process;
+my $hdl;
+
 sub run {
+  my $started = time;
+
+  $db->load();
+
   $httpd = AnyEvent::HTTP::Server->new(
     host => '0.0.0.0',
     port => 80,
@@ -73,6 +87,43 @@ sub run {
   );
 
   $httpd->listen;
+
+  %pipes
+      = ( 0 => IO::Pipe->new(), 1 => IO::Pipe->new(), 2 => IO::Pipe->new() );
+
+  for ( 1 .. 2 ) {
+    my $pid = fork();
+    if ($pid) {
+      $process = 0;
+      next;
+    }
+    else {
+      $process = $_;
+      last;
+    }
+  }
+
+  foreach my $key ( keys %pipes ) {
+    my $pipe = $pipes{$key};
+
+    if ( $key == $process ) {
+      $pipe->reader();
+
+      $hdl = AnyEvent::Handle->new(
+        fh      => $pipe,
+        on_read => sub {
+          my $h = shift;
+          _from_fork( $h->{rbuf} );
+          $h->{rbuf} = '';
+        }
+      );
+    }
+    else {
+      $pipe->writer;
+      $pipe->autoflush(1);
+    }
+  }
+
   $httpd->accept;
 
   EV::loop;
@@ -113,10 +164,10 @@ sub process {
       undef %STAT;
     }
 
-    if ( $STAGE == 3 ) {
-      $req->reply( 200, '{}', headers => $headers );
-      return;
-    }
+    # if ( $STAGE == 3 ) {
+    #   $req->reply( 200, '{}', headers => $headers );
+    #   return;
+    # }
 
     $cache_key = $req->uri;
 
@@ -138,8 +189,6 @@ sub process {
         $req->reply( 400, '{}', headers => $headers );
       }
       else {
-        $val = encode_utf8($val);
-
         if ( $STAT{$cache_key} > 1 ) {
           $CACHE{$cache_key} = $val;
         }
@@ -181,6 +230,13 @@ sub process {
         return;
       }
 
+      foreach ( keys %pipes ) {
+        my $pipe = $pipes{$_};
+        next if $process == $_;
+        my $line = 'c;' . $path[1] . ';;' . $content;
+        print $pipe "$line\n";
+      }
+
       $val = $db->create( $path[1], $val );
 
       if ( $val == 1 ) {
@@ -196,6 +252,13 @@ sub process {
       unless ( $val && keys %$val ) {
         $req->reply( 400, '{}', headers => $headers );
         return;
+      }
+
+      foreach ( keys %pipes ) {
+        my $pipe = $pipes{$_};
+        next if $process == $_;
+        my $line = 'u;' . $path[1] . ';' . $path[2] . ';' . $content;
+        print $pipe "$line\n";
       }
 
       $val = $db->update( $path[1], $path[2], $val );
@@ -216,6 +279,28 @@ sub process {
   }
   else {
     $req->reply( 404, '{}', headers => $headers );
+  }
+
+  return;
+}
+
+sub _from_fork {
+  my $lines = shift;
+
+  my @dec = split "\n", $lines;
+  return unless scalar @dec;
+
+  for ( my $i = 0; $i < scalar(@dec); $i++ ) {
+    my @dat = split ';', $dec[$i];
+
+    $val = $JSON->decode( $dat[3] );
+
+    if ( $dat[0] eq 'u' ) {
+      $db->update( $dat[1], $dat[2], $val );
+    }
+    else {
+      $db->create( $dat[1], $val );
+    }
   }
 
   return;
