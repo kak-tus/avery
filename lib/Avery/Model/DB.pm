@@ -134,7 +134,6 @@ sub load {
   my $self = shift;
 
   my $start = Time::HiRes::time;
-  $self->{logger}->INFO("Start $start");
 
   foreach (qw( users locations visits )) {
     my @files = glob "/tmp/unzip/$_*.json";
@@ -162,20 +161,54 @@ sub load {
       my $entity = ( keys %$decoded )[0];
 
       foreach my $val ( @{ $decoded->{$entity} } ) {
-        $self->create( $entity, $val, 1 );
+        $self->create( $entity, $val, 1, 1 );
       }
     }
   }
 
   my $end = Time::HiRes::time;
-  $self->{logger}->INFO( "Loaded $end, diff " . ( $end - $start ) );
+  $self->{logger}->INFO( 'Loaded in ' . ( $end - $start ) );
+
+  $start = Time::HiRes::time;
+
+  for ( my $i = 0; $i < scalar( @{ $DAT->{_user} } ); $i++ ) {
+    next unless defined $DAT->{_user}[$i];
+
+    @list = unpack 'L*', $DAT->{_user}[$i];
+
+    my @sorted = sort {
+      $DAT->{visits}{visited_at}[$a] <=> $DAT->{visits}{visited_at}[$b]
+    } @list;
+
+    $DAT->{_user}[$i] = pack 'L*', @sorted;
+  }
+
+  $end = Time::HiRes::time;
+  $self->{logger}->INFO( 'Sorted user in ' . ( $end - $start ) );
+
+  $start = Time::HiRes::time;
+
+  for ( my $i = 0; $i < scalar( @{ $DAT->{_location} } ); $i++ ) {
+    next unless defined $DAT->{_location}[$i];
+
+    @list = unpack 'L*', $DAT->{_location}[$i];
+
+    my @sorted = sort {
+      $DAT->{visits}{visited_at}[$a] <=> $DAT->{visits}{visited_at}[$b]
+    } @list;
+
+    $DAT->{_location}[$i] = pack 'L*', @sorted;
+  }
+
+  $end = Time::HiRes::time;
+  $self->{logger}->INFO( 'Sorted location in ' . ( $end - $start ) );
 
   return;
 }
 
 sub create {
   my $self = shift;
-  my ( $entity, $val, $no_validation ) = @_;
+  my ( $entity, $val, $no_validation, $no_sort ) = @_;
 
   if ( !$no_validation ) {
     foreach my $key ( keys %$val ) {
@@ -200,39 +233,52 @@ sub create {
   }
 
   if ( $entity eq 'visits' ) {
-    @list = unpack 'L*', ( $DAT->{_user}[ $val->{user} ] // '' );
+    if ($no_sort) {
+      unless ( $DAT->{_user}[ $val->{user} ] ) {
+        $DAT->{_user}[ $val->{user} ] = pack 'L*', ();
+      }
+      unless ( $DAT->{_location}[ $val->{location} ] ) {
+        $DAT->{_location}[ $val->{location} ] = pack 'L*', ();
+      }
 
-    my $idx = lower_bound {
-      $DAT->{visits}{visited_at}[$_]
-          <=> $DAT->{visits}{visited_at}[ $val->{id} ]
-    }
-    @list;
-
-    if ( $idx < 0 ) {
-      push @list, $val->{id};
-    }
-    else {
-      splice @list, $idx, 0, $val->{id};
-    }
-
-    $DAT->{_user}[ $val->{user} ] = pack 'L*', @list;
-
-    @list = unpack 'L*', ( $DAT->{_location}[ $val->{location} ] // '' );
-
-    $idx = lower_bound {
-      $DAT->{visits}{visited_at}[$_]
-          <=> $DAT->{visits}{visited_at}[ $val->{id} ]
-    }
-    @list;
-
-    if ( $idx < 0 ) {
-      push @list, $val->{id};
+      $DAT->{_user}[ $val->{user} ]         .= pack 'L*', ( $val->{id} );
+      $DAT->{_location}[ $val->{location} ] .= pack 'L*', ( $val->{id} );
     }
     else {
-      splice @list, $idx, 0, $val->{id};
-    }
+      @list = unpack 'L*', ( $DAT->{_user}[ $val->{user} ] // '' );
 
-    $DAT->{_location}[ $val->{location} ] = pack 'L*', @list;
+      my $idx = lower_bound {
+        $DAT->{visits}{visited_at}[$_]
+            <=> $DAT->{visits}{visited_at}[ $val->{id} ];
+      }
+      @list;
+
+      if ( $idx < 0 ) {
+        push @list, $val->{id};
+      }
+      else {
+        splice @list, $idx, 0, $val->{id};
+      }
+
+      $DAT->{_user}[ $val->{user} ] = pack 'L*', @list;
+
+      @list = unpack 'L*', ( $DAT->{_location}[ $val->{location} ] // '' );
+
+      $idx = lower_bound {
+        $DAT->{visits}{visited_at}[$_]
+            <=> $DAT->{visits}{visited_at}[ $val->{id} ];
+      }
+      @list;
+
+      if ( $idx < 0 ) {
+        push @list, $val->{id};
+      }
+      else {
+        splice @list, $idx, 0, $val->{id};
+      }
+
+      $DAT->{_location}[ $val->{location} ] = pack 'L*', @list;
+    }
   }
 
   return 1;
@@ -281,7 +327,7 @@ sub update {
     @list = unpack 'L*', ( $DAT->{_user}[ $DAT->{visits}{user}[$id] ] // '' );
 
     my $idx = bsearchidx {
-      $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id]
+      $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id];
     }
     @list;
     splice @list, $idx, 1;
@@ -291,7 +337,7 @@ sub update {
 
     $idx = lower_bound {
       $DAT->{visits}{visited_at}[$_]
-          <=> ( $val->{visited_at} || $DAT->{visits}{visited_at}[$id] )
+          <=> ( $val->{visited_at} || $DAT->{visits}{visited_at}[$id] );
     }
     @list;
 
@@ -313,7 +359,7 @@ sub update {
         ( $DAT->{_location}[ $DAT->{visits}{location}[$id] ] // '' );
 
     my $idx = bsearchidx {
-      $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id]
+      $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id];
     }
     @list;
     splice @list, $idx, 1;
@@ -322,7 +368,7 @@ sub update {
     @list = unpack 'L*', ( $DAT->{_location}[ $val->{location} ] // '' );
     $idx = lower_bound {
       $DAT->{visits}{visited_at}[$_]
-          <=> ( $val->{visited_at} || $DAT->{visits}{visited_at}[$id] )
+          <=> ( $val->{visited_at} || $DAT->{visits}{visited_at}[$id] );
     }
     @list;
 
@@ -345,13 +391,13 @@ sub update {
           ( $DAT->{_user}[ $DAT->{visits}{user}[$id] ] // '' );
 
       my $idx = bsearchidx {
-        $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id]
+        $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id];
       }
       @list;
       splice @list, $idx, 1;
 
       $idx = lower_bound {
-        $DAT->{visits}{visited_at}[$_] <=> $val->{visited_at}
+        $DAT->{visits}{visited_at}[$_] <=> $val->{visited_at};
       }
       @list;
 
@@ -372,13 +418,13 @@ sub update {
           ( $DAT->{_location}[ $DAT->{visits}{location}[$id] ] // '' );
 
       my $idx = bsearchidx {
-        $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id]
+        $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id];
       }
       @list;
       splice @list, $idx, 1;
 
       $idx = lower_bound {
-        $DAT->{visits}{visited_at}[$_] <=> $val->{visited_at}
+        $DAT->{visits}{visited_at}[$_] <=> $val->{visited_at};
       }
       @list;
 
