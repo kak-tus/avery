@@ -9,6 +9,7 @@ use Cpanel::JSON::XS;
 use Data::Dumper;
 use DateTime;
 use DateTime::TimeZone;
+use IO::Pipe;
 use List::MoreUtils qw( lower_bound bsearchidx upper_bound );
 use Tie::Array::PackedC Birth    => 'l';
 use Tie::Array::PackedC City     => 'S';
@@ -152,6 +153,7 @@ sub load {
       } @files
         )
     {
+      say $file;
       open my $fl, "$file";
       my $st = <$fl>;
       close $fl;
@@ -169,18 +171,90 @@ sub load {
   my $end = Time::HiRes::time;
   $self->{logger}->INFO( 'Loaded in ' . ( $end - $start ) );
 
+  my $pipe_res = IO::Pipe->new();
+  my %pipes    = (
+    1 => IO::Pipe->new(),
+    2 => IO::Pipe->new(),
+    3 => IO::Pipe->new(),
+    4 => IO::Pipe->new(),
+  );
+  my $process = 0;
+
+  for ( 1 .. 4 ) {
+    my $pid = fork();
+    if ($pid) {
+      next;
+    }
+    else {
+      $process = $_;
+      last;
+    }
+  }
+
+  if ($process) {
+    $pipe_res->writer();
+    $pipe_res->autoflush(1);
+
+    my $pipe = $pipes{$process};
+    $pipe->reader();
+
+    while (<$pipe>) {
+      next unless $_;
+      chomp;
+
+      last if $_ eq 'stop';
+
+      @list = split ',', $_;
+      my $i = shift @list;
+
+      my @sorted = sort {
+        $DAT->{visits}{visited_at}[$a] <=> $DAT->{visits}{visited_at}[$b]
+      } @list;
+
+      my $str = join ',', $i, @sorted;
+      print $pipe_res "$str\n";
+    }
+
+    exit;
+  }
+
+  $pipe_res->reader();
+  for ( 1 .. 4 ) {
+    $pipes{$_}->writer();
+    $pipes{$_}->autoflush(1);
+  }
+
   $start = Time::HiRes::time;
+
+  my $pipe_idx = 1;
+  my $cnt      = 0;
 
   for ( my $i = 0; $i < scalar( @{ $DAT->{_user} } ); $i++ ) {
     next unless defined $DAT->{_user}[$i];
 
     @list = unpack 'L*', $DAT->{_user}[$i];
+    my $str = join ',', $i, @list;
 
-    my @sorted = sort {
-      $DAT->{visits}{visited_at}[$a] <=> $DAT->{visits}{visited_at}[$b]
-    } @list;
+    my $pipe = $pipes{$pipe_idx};
+    $pipe_idx++;
+    $pipe_idx = 1 if $pipe_idx > 4;
 
-    $DAT->{_user}[$i] = pack 'L*', @sorted;
+    print $pipe "$str\n";
+    $cnt++;
+
+    if ( $cnt > 100 || $i == scalar( @{ $DAT->{_user} } ) - 1 ) {
+      while (<$pipe_res>) {
+        next unless $_;
+        chomp;
+
+        @list = split ',', $_;
+        my $j = shift @list;
+        $DAT->{_user}[$j] = pack 'L*', @list;
+        $cnt--;
+
+        last if $cnt <= 0;
+      }
+    }
   }
 
   $end = Time::HiRes::time;
@@ -192,16 +266,37 @@ sub load {
     next unless defined $DAT->{_location}[$i];
 
     @list = unpack 'L*', $DAT->{_location}[$i];
+    my $str = join ',', $i, @list;
 
-    my @sorted = sort {
-      $DAT->{visits}{visited_at}[$a] <=> $DAT->{visits}{visited_at}[$b]
-    } @list;
+    my $pipe = $pipes{$pipe_idx};
+    $pipe_idx++;
+    $pipe_idx = 1 if $pipe_idx > 4;
 
-    $DAT->{_location}[$i] = pack 'L*', @sorted;
+    print $pipe "$str\n";
+    $cnt++;
+
+    if ( $cnt > 100 || $i == scalar( @{ $DAT->{_user} } ) - 1 ) {
+      while (<$pipe_res>) {
+        next unless $_;
+        chomp;
+
+        @list = split ',', $_;
+        my $j = shift @list;
+        $DAT->{_location}[$j] = pack 'L*', @list;
+        $cnt--;
+
+        last if $cnt <= 0;
+      }
+    }
   }
 
   $end = Time::HiRes::time;
   $self->{logger}->INFO( 'Sorted location in ' . ( $end - $start ) );
+
+  for ( 1 .. 4 ) {
+    my $pipe = $pipes{$_};
+    print $pipe "stop\n";
+  }
 
   return;
 }
