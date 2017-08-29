@@ -5,7 +5,6 @@ use warnings;
 use v5.10;
 use utf8;
 
-use Clone qw(clone);
 use Cpanel::JSON::XS;
 use Data::Dumper;
 use DateTime;
