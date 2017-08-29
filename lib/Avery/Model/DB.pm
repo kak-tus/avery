@@ -10,7 +10,7 @@ use Cpanel::JSON::XS;
 use Data::Dumper;
 use DateTime;
 use DateTime::TimeZone;
-use List::MoreUtils qw( lower_bound bsearchidx );
+use List::MoreUtils qw( lower_bound bsearchidx upper_bound );
 use Tie::Array::PackedC Birth    => 'l';
 use Tie::Array::PackedC City     => 'S';
 use Tie::Array::PackedC Country  => 'C';
@@ -22,8 +22,8 @@ use Tie::Array::PackedC Location => 'L';
 use Tie::Array::PackedC Mark     => 'C';
 use Tie::Array::PackedC Place    => 'C';
 use Tie::Array::PackedC qw(packed_array);
-use Tie::Array::PackedC User     => 'L';
-use Tie::Array::PackedC Visited  => 'l';
+use Tie::Array::PackedC User    => 'L';
+use Tie::Array::PackedC Visited => 'l';
 use Time::HiRes qw( gettimeofday tv_interval );
 
 our $DAT;
@@ -57,10 +57,9 @@ my %VALIDATION = (
 );
 
 my $t0;
-my @res;
 my ( $sum, $cnt );
-my @keys;
-my @sorted;
+my @list;
+my $res;
 
 my %entities_fields = (
   users => [
@@ -135,24 +134,37 @@ sub new {
 sub load {
   my $self = shift;
 
-  my @files = glob '/tmp/unzip/users*.json';
-  push @files, glob '/tmp/unzip/locations*.json';
-  push @files, glob '/tmp/unzip/visits*.json';
-
   my $start = Time::HiRes::time;
   $self->{logger}->INFO("Start $start");
 
-  foreach my $file (@files) {
-    open my $fl, "$file";
-    my $st = <$fl>;
-    close $fl;
+  foreach (qw( users locations visits )) {
+    my @files = glob "/tmp/unzip/$_*.json";
 
-    my $decoded = $JSON->decode($st);
+    foreach my $file (
+      sort {
+        substr(
+          $a,
+          index( $a, '_' ) + 1,
+          index( $a, '.' ) - index( $a, '_' )
+            ) <=> substr(
+          $b,
+          index( $b, '_' ) + 1,
+          index( $b, '.' ) - index( $b, '_' )
+            )
+      } @files
+        )
+    {
+      open my $fl, "$file";
+      my $st = <$fl>;
+      close $fl;
 
-    my $entity = ( keys %$decoded )[0];
+      my $decoded = $JSON->decode($st);
 
-    foreach my $val ( @{ $decoded->{$entity} } ) {
-      $self->create( $entity, $val, without_validation => 1 );
+      my $entity = ( keys %$decoded )[0];
+
+      foreach my $val ( @{ $decoded->{$entity} } ) {
+        $self->create( $entity, $val, 1 );
+      }
     }
   }
 
@@ -164,10 +176,9 @@ sub load {
 
 sub create {
   my $self = shift;
-  my ( $entity, $val ) = ( shift, shift );
-  my %params = @_;
+  my ( $entity, $val, $no_validation ) = @_;
 
-  if ( !$params{without_validation} ) {
+  if ( !$no_validation ) {
     foreach my $key ( keys %$val ) {
       next unless $VALIDATION{$key};
       return -2 if _validate( 'create', $key, $val->{$key} ) == -2;
@@ -190,9 +201,13 @@ sub create {
   }
 
   if ( $entity eq 'visits' ) {
-    my @list = unpack 'L*', ( $DAT->{_user}[ $val->{user} ] // '' );
+    @list = unpack 'L*', ( $DAT->{_user}[ $val->{user} ] // '' );
 
-    my $idx = lower_bound { $_ <=> $val->{id} } @list;
+    my $idx = lower_bound {
+      $DAT->{visits}{visited_at}[$_]
+          <=> $DAT->{visits}{visited_at}[ $val->{id} ]
+    }
+    @list;
 
     if ( $idx < 0 ) {
       push @list, $val->{id};
@@ -205,7 +220,11 @@ sub create {
 
     @list = unpack 'L*', ( $DAT->{_location}[ $val->{location} ] // '' );
 
-    $idx = lower_bound { $_ <=> $val->{id} } @list;
+    $idx = lower_bound {
+      $DAT->{visits}{visited_at}[$_]
+          <=> $DAT->{visits}{visited_at}[ $val->{id} ]
+    }
+    @list;
 
     if ( $idx < 0 ) {
       push @list, $val->{id};
@@ -260,16 +279,22 @@ sub update {
     && $val->{user}
     && $val->{user} != $DAT->{visits}{user}[$id] )
   {
-    my @list = unpack 'L*',
-        ( $DAT->{_user}[ $DAT->{visits}{user}[$id] ] // '' );
+    @list = unpack 'L*', ( $DAT->{_user}[ $DAT->{visits}{user}[$id] ] // '' );
 
-    my $idx = bsearchidx { $_ <=> $id } @list;
+    my $idx = bsearchidx {
+      $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id]
+    }
+    @list;
     splice @list, $idx, 1;
     $DAT->{_user}[ $DAT->{visits}{user}[$id] ] = pack 'L*', @list;
 
     @list = unpack 'L*', ( $DAT->{_user}[ $val->{user} ] // '' );
 
-    $idx = lower_bound { $_ <=> $id } @list;
+    $idx = lower_bound {
+      $DAT->{visits}{visited_at}[$_]
+          <=> ( $val->{visited_at} || $DAT->{visits}{visited_at}[$id] )
+    }
+    @list;
 
     if ( $idx < 0 ) {
       push @list, $id;
@@ -285,15 +310,22 @@ sub update {
     && $val->{location}
     && $val->{location} != $DAT->{visits}{location}[$id] )
   {
-    my @list = unpack 'L*',
+    @list = unpack 'L*',
         ( $DAT->{_location}[ $DAT->{visits}{location}[$id] ] // '' );
 
-    my $idx = bsearchidx { $_ <=> $id } @list;
+    my $idx = bsearchidx {
+      $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id]
+    }
+    @list;
     splice @list, $idx, 1;
     $DAT->{_location}[ $DAT->{visits}{location}[$id] ] = pack 'L*', @list;
 
     @list = unpack 'L*', ( $DAT->{_location}[ $val->{location} ] // '' );
-    $idx = lower_bound { $_ <=> $id } @list;
+    $idx = lower_bound {
+      $DAT->{visits}{visited_at}[$_]
+          <=> ( $val->{visited_at} || $DAT->{visits}{visited_at}[$id] )
+    }
+    @list;
 
     if ( $idx < 0 ) {
       push @list, $id;
@@ -303,6 +335,63 @@ sub update {
     }
 
     $DAT->{_location}[ $val->{location} ] = pack 'L*', @list;
+  }
+
+  if ( $entity eq 'visits'
+    && $val->{visited_at}
+    && $val->{visited_at} != $DAT->{visits}{visited_at}[$id] )
+  {
+    unless ( $val->{user} && $val->{user} != $DAT->{visits}{user}[$id] ) {
+      @list = unpack 'L*',
+          ( $DAT->{_user}[ $DAT->{visits}{user}[$id] ] // '' );
+
+      my $idx = bsearchidx {
+        $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id]
+      }
+      @list;
+      splice @list, $idx, 1;
+
+      $idx = lower_bound {
+        $DAT->{visits}{visited_at}[$_] <=> $val->{visited_at}
+      }
+      @list;
+
+      if ( $idx < 0 ) {
+        push @list, $id;
+      }
+      else {
+        splice @list, $idx, 0, $id;
+      }
+
+      $DAT->{_user}[ $DAT->{visits}{user}[$id] ] = pack 'L*', @list;
+    }
+
+    unless ( $val->{location}
+      && $val->{location} != $DAT->{visits}{location}[$id] )
+    {
+      @list = unpack 'L*',
+          ( $DAT->{_location}[ $DAT->{visits}{location}[$id] ] // '' );
+
+      my $idx = bsearchidx {
+        $DAT->{visits}{visited_at}[$_] <=> $DAT->{visits}{visited_at}[$id]
+      }
+      @list;
+      splice @list, $idx, 1;
+
+      $idx = lower_bound {
+        $DAT->{visits}{visited_at}[$_] <=> $val->{visited_at}
+      }
+      @list;
+
+      if ( $idx < 0 ) {
+        push @list, $id;
+      }
+      else {
+        splice @list, $idx, 0, $id;
+      }
+
+      $DAT->{_location}[ $DAT->{visits}{location}[$id] ] = pack 'L*', @list;
+    }
   }
 
   foreach ( keys %$val ) {
@@ -362,42 +451,53 @@ sub users_visits {
 
   return -1 unless defined $DAT->{users}{gender}[$id];
 
-  @res = ();
-
-  my $fd = $params->{fromDate};
   my $td = $params->{toDate};
   my $cn = $params->{country};
   my $ds = $params->{toDistance};
 
-  foreach ( unpack 'L*', ( $DAT->{_user}[$id] // '' ) ) {
-    next if $fd && $DAT->{visits}{visited_at}[$_] <= $fd;
-    next if $td && $DAT->{visits}{visited_at}[$_] >= $td;
+  $res = '';
 
+  @list = unpack 'L*', ( $DAT->{_user}[$id] // '' );
+
+  my $from = 0;
+  my $to   = scalar(@list);
+
+  if ( $params->{fromDate} ) {
+    $from
+        = upper_bound { $DAT->{visits}{visited_at}[$_] <=> $params->{fromDate} }
+    @list;
+    $from = 0 if $from < 0;
+  }
+  if ( $params->{toDate} ) {
+    $to = lower_bound { $DAT->{visits}{visited_at}[$_] <=> $params->{toDate} }
+    @list;
+    $to = scalar(@list) if $to < 0;
+  }
+
+  for ( my $i = $from; $i < $to; $i++ ) {
     next
         if $cn
         && $maps->{country}{revmap}
-        [ $DAT->{locations}{country}[ $DAT->{visits}{location}[$_] ] ] ne $cn;
+        [ $DAT->{locations}{country}[ $DAT->{visits}{location}[ $list[$i] ] ]
+        ] ne $cn;
     next
         if $ds
-        && $DAT->{locations}{distance}[ $DAT->{visits}{location}[$_] ] >= $ds;
+        && $DAT->{locations}{distance}
+        [ $DAT->{visits}{location}[ $list[$i] ] ] >= $ds;
 
-    my %visit = (
-      visited_at => $DAT->{visits}{visited_at}[$_],
-      enc        => '{"mark":'
-          . $DAT->{visits}{mark}[$_]
-          . ',"visited_at":'
-          . $DAT->{visits}{visited_at}[$_]
-          . ',"place":"'
-          . $maps->{place}{revmap}
-          [ $DAT->{locations}{place}[ $DAT->{visits}{location}[$_] ] ] . '"}',
-    );
-    push @res, \%visit;
+    $res
+        .= '{"mark":'
+        . $DAT->{visits}{mark}[ $list[$i] ]
+        . ',"visited_at":'
+        . $DAT->{visits}{visited_at}[ $list[$i] ]
+        . ',"place":"'
+        . $maps->{place}{revmap}
+        [ $DAT->{locations}{place}[ $DAT->{visits}{location}[ $list[$i] ] ] ]
+        . '"},';
   }
 
-  @sorted
-      = map { $_->{enc} } sort { $a->{visited_at} <=> $b->{visited_at} } @res;
-
-  return '{"visits":[' . join( ',', @sorted ) . ']}';
+  chop $res;
+  return '{"visits":[' . $res . ']}';
 }
 
 sub avg {
@@ -412,32 +512,44 @@ sub avg {
 
   ( $sum, $cnt ) = ( 0, 0 );
 
-  my $fd = $params->{fromDate};
-  my $td = $params->{toDate};
   my $fa = $params->{fromAge};
   my $ta = $params->{toAge};
   my $gn = $params->{gender};
 
-  foreach ( unpack 'L*', ( $DAT->{_location}[$id] // '' ) ) {
-    next if $fd && $DAT->{visits}{visited_at}[$_] <= $fd;
-    next if $td && $DAT->{visits}{visited_at}[$_] >= $td;
+  @list = unpack 'L*', ( $DAT->{_location}[$id] // '' );
 
+  my $from = 0;
+  my $to   = scalar(@list);
+
+  if ( $params->{fromDate} ) {
+    $from
+        = upper_bound { $DAT->{visits}{visited_at}[$_] <=> $params->{fromDate} }
+    @list;
+    $from = 0 if $from < 0;
+  }
+  if ( $params->{toDate} ) {
+    $to = lower_bound { $DAT->{visits}{visited_at}[$_] <=> $params->{toDate} }
+    @list;
+    $to = scalar(@list) if $to < 0;
+  }
+
+  for ( my $i = $from; $i < $to; $i++ ) {
     next
         if $gn
         && $maps->{gender}{revmap}
-        [ $DAT->{users}{gender}[ $DAT->{visits}{user}[$_] ] ] ne $gn;
+        [ $DAT->{users}{gender}[ $DAT->{visits}{user}[ $list[$i] ] ] ] ne $gn;
 
     next
         if $fa
-        && _years( $DAT->{users}{birth_date}[ $DAT->{visits}{user}[$_] ] )
-        < $fa;
+        && _years(
+      $DAT->{users}{birth_date}[ $DAT->{visits}{user}[ $list[$i] ] ] ) < $fa;
     next
         if $ta
-        && _years( $DAT->{users}{birth_date}[ $DAT->{visits}{user}[$_] ] )
-        >= $ta;
+        && _years(
+      $DAT->{users}{birth_date}[ $DAT->{visits}{user}[ $list[$i] ] ] ) >= $ta;
 
     $cnt++;
-    $sum += $DAT->{visits}{mark}[$_];
+    $sum += $DAT->{visits}{mark}[ $list[$i] ];
   }
 
   return 0 unless $cnt;

@@ -52,9 +52,11 @@ my %pipes;
 my $process;
 my $hdl;
 
-my $FORKS = 5;
+my $FORKS = 4;
 
 sub run {
+  $db->load();
+
   $httpd = AnyEvent::HTTP::Server->new(
     host => '0.0.0.0',
     port => 80,
@@ -121,10 +123,7 @@ sub run {
     }
   }
 
-  unless ( $process == 0 ) {
-    $httpd->accept;
-    $db->load();
-  }
+  $httpd->accept;
 
   EV::loop;
 }
@@ -193,7 +192,7 @@ sub process {
         return;
       }
 
-      for ( 1 .. $FORKS ) {
+      for ( 0 .. $FORKS ) {
         my $pipe = $pipes{$_};
         next if $process == $_;
         my $line = 'c;' . $path[1] . ';;' . $content;
@@ -217,7 +216,7 @@ sub process {
         return;
       }
 
-      for ( 1 .. $FORKS ) {
+      for ( 0 .. $FORKS ) {
         my $pipe = $pipes{$_};
         next if $process == $_;
         my $line = 'u;' . $path[1] . ';' . $path[2] . ';' . $content;
