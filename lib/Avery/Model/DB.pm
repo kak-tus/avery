@@ -601,38 +601,71 @@ sub users_visits {
   my $from = 0;
   my $to   = scalar(@list);
 
-  if ( $params->{fromDate} ) {
-    $from
-        = upper_bound { $DAT->{visits}{visited_at}[$_] <=> $params->{fromDate} }
-    @list;
-    $from = 0 if $from < 0;
-  }
-  if ( $params->{toDate} ) {
-    $to = lower_bound { $DAT->{visits}{visited_at}[$_] <=> $params->{toDate} }
-    @list;
-    $to = scalar(@list) if $to < 0;
-  }
+  if ( $to > 50 ) {
+    if ( $params->{fromDate} ) {
+      $from = upper_bound {
+        $DAT->{visits}{visited_at}[$_] <=> $params->{fromDate};
+      }
+      @list;
+      $from = 0 if $from < 0;
+    }
+    if ( $params->{toDate} ) {
+      $to
+          = lower_bound { $DAT->{visits}{visited_at}[$_] <=> $params->{toDate} }
+      @list;
+      $to = scalar(@list) if $to < 0;
+    }
 
-  for ( my $i = $from; $i < $to; $i++ ) {
-    next
-        if $cn
-        && $maps->{country}{revmap}
-        [ $DAT->{locations}{country}[ $DAT->{visits}{location}[ $list[$i] ] ]
-        ] ne $cn;
-    next
-        if $ds
-        && $DAT->{locations}{distance}
-        [ $DAT->{visits}{location}[ $list[$i] ] ] >= $ds;
+    for ( my $i = $from; $i < $to; $i++ ) {
+      next
+          if $cn
+          && $maps->{country}{revmap}[ $DAT->{locations}{country}
+          [ $DAT->{visits}{location}[ $list[$i] ] ] ] ne $cn;
+      next
+          if $ds
+          && $DAT->{locations}{distance}
+          [ $DAT->{visits}{location}[ $list[$i] ] ] >= $ds;
 
-    $res
-        .= '{"mark":'
-        . $DAT->{visits}{mark}[ $list[$i] ]
-        . ',"visited_at":'
-        . $DAT->{visits}{visited_at}[ $list[$i] ]
-        . ',"place":"'
-        . $maps->{place}{revmap}
-        [ $DAT->{locations}{place}[ $DAT->{visits}{location}[ $list[$i] ] ] ]
-        . '"},';
+      $res
+          .= '{"mark":'
+          . $DAT->{visits}{mark}[ $list[$i] ]
+          . ',"visited_at":'
+          . $DAT->{visits}{visited_at}[ $list[$i] ]
+          . ',"place":"'
+          . $maps->{place}{revmap}
+          [ $DAT->{locations}{place}[ $DAT->{visits}{location}[ $list[$i] ] ]
+          ]
+          . '"},';
+    }
+  }
+  else {
+    my $fd = $params->{fromDate};
+    my $td = $params->{toDate};
+
+    foreach (@list) {
+      next if $fd && $DAT->{visits}{visited_at}[$_] <= $fd;
+      last if $td && $DAT->{visits}{visited_at}[$_] >= $td;
+
+      next
+          if $cn
+          && $maps->{country}{revmap}
+          [ $DAT->{locations}{country}[ $DAT->{visits}{location}[$_] ] ] ne
+          $cn;
+      next
+          if $ds
+          && $DAT->{locations}{distance}[ $DAT->{visits}{location}[$_] ]
+          >= $ds;
+
+      $res
+          .= '{"mark":'
+          . $DAT->{visits}{mark}[$_]
+          . ',"visited_at":'
+          . $DAT->{visits}{visited_at}[$_]
+          . ',"place":"'
+          . $maps->{place}{revmap}
+          [ $DAT->{locations}{place}[ $DAT->{visits}{location}[$_] ] ]
+          . '"},';
+    }
   }
 
   chop $res;
@@ -660,35 +693,68 @@ sub avg {
   my $from = 0;
   my $to   = scalar(@list);
 
-  if ( $params->{fromDate} ) {
-    $from
-        = upper_bound { $DAT->{visits}{visited_at}[$_] <=> $params->{fromDate} }
-    @list;
-    $from = 0 if $from < 0;
+  if ( $to > 50 ) {
+    if ( $params->{fromDate} ) {
+      $from = upper_bound {
+        $DAT->{visits}{visited_at}[$_] <=> $params->{fromDate};
+      }
+      @list;
+      $from = 0 if $from < 0;
+    }
+    if ( $params->{toDate} ) {
+      $to
+          = lower_bound { $DAT->{visits}{visited_at}[$_] <=> $params->{toDate} }
+      @list;
+      $to = scalar(@list) if $to < 0;
+    }
+
+    for ( my $i = $from; $i < $to; $i++ ) {
+      next
+          if $gn
+          && $maps->{gender}{revmap}
+          [ $DAT->{users}{gender}[ $DAT->{visits}{user}[ $list[$i] ] ] ] ne
+          $gn;
+
+      next
+          if $fa
+          && _years(
+        $DAT->{users}{birth_date}[ $DAT->{visits}{user}[ $list[$i] ] ] )
+          < $fa;
+      next
+          if $ta
+          && _years(
+        $DAT->{users}{birth_date}[ $DAT->{visits}{user}[ $list[$i] ] ] )
+          >= $ta;
+
+      $cnt++;
+      $sum += $DAT->{visits}{mark}[ $list[$i] ];
+    }
   }
-  if ( $params->{toDate} ) {
-    $to = lower_bound { $DAT->{visits}{visited_at}[$_] <=> $params->{toDate} }
-    @list;
-    $to = scalar(@list) if $to < 0;
-  }
+  else {
+    my $fd = $params->{fromDate};
+    my $td = $params->{toDate};
 
-  for ( my $i = $from; $i < $to; $i++ ) {
-    next
-        if $gn
-        && $maps->{gender}{revmap}
-        [ $DAT->{users}{gender}[ $DAT->{visits}{user}[ $list[$i] ] ] ] ne $gn;
+    foreach (@list) {
+      next if $fd && $DAT->{visits}{visited_at}[$_] <= $fd;
+      last if $td && $DAT->{visits}{visited_at}[$_] >= $td;
 
-    next
-        if $fa
-        && _years(
-      $DAT->{users}{birth_date}[ $DAT->{visits}{user}[ $list[$i] ] ] ) < $fa;
-    next
-        if $ta
-        && _years(
-      $DAT->{users}{birth_date}[ $DAT->{visits}{user}[ $list[$i] ] ] ) >= $ta;
+      next
+          if $gn
+          && $maps->{gender}{revmap}
+          [ $DAT->{users}{gender}[ $DAT->{visits}{user}[$_] ] ] ne $gn;
 
-    $cnt++;
-    $sum += $DAT->{visits}{mark}[ $list[$i] ];
+      next
+          if $fa
+          && _years( $DAT->{users}{birth_date}[ $DAT->{visits}{user}[$_] ] )
+          < $fa;
+      next
+          if $ta
+          && _years( $DAT->{users}{birth_date}[ $DAT->{visits}{user}[$_] ] )
+          >= $ta;
+
+      $cnt++;
+      $sum += $DAT->{visits}{mark}[$_];
+    }
   }
 
   return 0 unless $cnt;
