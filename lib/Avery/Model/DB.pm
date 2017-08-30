@@ -153,7 +153,6 @@ sub load {
       } @files
         )
     {
-      say $file;
       open my $fl, "$file";
       my $st = <$fl>;
       close $fl;

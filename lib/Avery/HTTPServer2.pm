@@ -52,7 +52,7 @@ my %pipes;
 my $process;
 my $hdl;
 
-my $FORKS = 4;
+my $FORKS = 5;
 
 sub run {
   $db->load();
